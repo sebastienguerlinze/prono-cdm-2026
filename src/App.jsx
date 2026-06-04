@@ -61,7 +61,7 @@ function Auth({ notify }) {
     <>
       <div className="hero">
         <div className="kicker">⚽ Coupe du Monde 2026</div>
-        <h1>Pronos entre<br /><em>potes & famille</em></h1>
+        <h1>Pronos entre<br /><em>Friends</em></h1>
         <p>Parie sur chaque match, grimpe au classement, rafle la cagnotte.</p>
       </div>
       <div className="wrap">
