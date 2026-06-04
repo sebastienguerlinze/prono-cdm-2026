@@ -30,32 +30,22 @@ export default function App() {
   )
 }
 
-/* ================= AUTH ================= */
+/* ================= AUTH (prénom uniquement, sans e-mail) ================= */
 function Auth({ notify }) {
-  const [email, setEmail] = useState('')
   const [name, setName] = useState('')
-  const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const send = async () => {
-    if (!email || !name) return notify('Indique ton prénom et ton e-mail')
+  const enter = async () => {
+    if (!name.trim()) return notify('Indique ton prénom')
     setBusy(true)
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { data: { display_name: name }, emailRedirectTo: window.location.origin },
+    const { error } = await supabase.auth.signInAnonymously({
+      options: { data: { display_name: name.trim() } },
     })
+    if (error) { setBusy(false); return notify(error.message) }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) await supabase.from('profiles').upsert({ id: user.id, display_name: name.trim() })
     setBusy(false)
-    if (error) return notify(error.message)
-    setSent(true)
   }
-
-  if (sent) return (
-    <div className="center">
-      <div style={{ fontSize: 46 }}>📩</div>
-      <h1 style={{ fontSize: 30 }}>Vérifie tes e-mails</h1>
-      <p className="muted">On a envoyé un lien magique à<br /><b style={{ color: 'var(--txt)' }}>{email}</b><br />Clique dessus depuis ce téléphone.</p>
-    </div>
-  )
 
   return (
     <>
@@ -67,11 +57,10 @@ function Auth({ notify }) {
       <div className="wrap">
         <div className="card">
           <div className="field"><label>Ton prénom (visible au classement)</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Sébastien" /></div>
-          <div className="field"><label>Ton e-mail</label>
-            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="toi@email.be" /></div>
-          <button className="btn" onClick={send} disabled={busy}>{busy ? '…' : 'Recevoir mon lien de connexion'}</button>
-          <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 12 }}>Pas de mot de passe : on t'envoie un lien sécurisé.</p>
+            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Sébastien"
+              onKeyDown={e => e.key === 'Enter' && enter()} /></div>
+          <button className="btn" onClick={enter} disabled={busy}>{busy ? '…' : "C'est parti !"}</button>
+          <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 12 }}>Pas de mot de passe : tu entres direct avec ton prénom.</p>
         </div>
       </div>
     </>
