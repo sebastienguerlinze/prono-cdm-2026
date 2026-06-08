@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from './supabaseClient'
 
 /* ---------- utils ---------- */
@@ -9,18 +9,21 @@ const dayKey = (iso) => new Intl.DateTimeFormat('fr-CA', { timeZone: BX, year: '
 const PHASES = { group: 'Phase de groupes', r32: '16es de finale', r16: '8es de finale', qf: 'Quarts', sf: 'Demi-finales', third: '3e place', final: 'Finale' }
 const randCode = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
 
+/* ---------- buteurs : correspondance des 3 pays écrits différemment ---------- */
+const TEAM_FIX = { 'DR Congo': 'Congo DR', 'Cape Verde': 'Cape Verde Islands', 'Turkey': 'Türkiye' }
+const teamCode = (name) => (name ? (TEAM_FIX[name] || name) : name)
+const resize = (arr, n) => { const out = (arr || []).slice(0, n); while (out.length < n) out.push(''); return out }
+
 /* ================= APP ================= */
 export default function App() {
   const [session, setSession] = useState(undefined)
   const [toast, setToast] = useState('')
   const notify = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 2600) }, [])
-
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => sub.subscription.unsubscribe()
   }, [])
-
   if (session === undefined) return <div className="center"><div className="spinner" /></div>
   return (
     <div className="app">
@@ -34,7 +37,6 @@ export default function App() {
 function Auth({ notify }) {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
-
   const enter = async () => {
     if (!name.trim()) return notify('Indique ton prénom')
     setBusy(true)
@@ -46,7 +48,6 @@ function Auth({ notify }) {
     if (user) await supabase.from('profiles').upsert({ id: user.id, display_name: name.trim() })
     setBusy(false)
   }
-
   return (
     <>
       <div className="hero">
@@ -70,11 +71,9 @@ function Auth({ notify }) {
 /* ================= SHELL (navigation) ================= */
 function Shell({ session, notify }) {
   const uid = session.user.id
-  const [group, setGroup] = useState(null)   // groupe ouvert
+  const [group, setGroup] = useState(null) // groupe ouvert
   const [tab, setTab] = useState('matchs')
-
   if (!group) return <Home uid={uid} notify={notify} onOpen={(g) => { setGroup(g); setTab('matchs') }} onLogout={() => supabase.auth.signOut()} />
-
   return (
     <>
       <div className="topbar">
@@ -100,16 +99,13 @@ function Shell({ session, notify }) {
 function Home({ uid, notify, onOpen, onLogout }) {
   const [groups, setGroups] = useState(null)
   const [mode, setMode] = useState(null) // create | join
-
   const load = useCallback(async () => {
     const { data } = await supabase.from('group_members').select('groups(*)').eq('user_id', uid)
     setGroups((data || []).map(r => r.groups).filter(Boolean))
   }, [uid])
   useEffect(() => { load() }, [load])
-
   if (mode === 'create') return <CreateGroup uid={uid} notify={notify} onDone={(g) => { setMode(null); load(); if (g) onOpen(g) }} onCancel={() => setMode(null)} />
   if (mode === 'join') return <JoinGroup uid={uid} notify={notify} onDone={() => { setMode(null); load() }} onCancel={() => setMode(null)} />
-
   return (
     <>
       <div className="topbar">
@@ -145,7 +141,6 @@ function CreateGroup({ uid, notify, onDone, onCancel }) {
   const [f, setF] = useState({ name: '', stake: 10, scorers: true, fantasy: false, exact: 3, outcome: 1, goaldiff: 1, scorer: 1 })
   const [busy, setBusy] = useState(false)
   const set = (k, v) => setF(s => ({ ...s, [k]: v }))
-
   const create = async () => {
     if (!f.name) return notify('Donne un nom au groupe')
     setBusy(true)
@@ -159,7 +154,6 @@ function CreateGroup({ uid, notify, onDone, onCancel }) {
     await supabase.from('group_members').insert({ group_id: data.id, user_id: uid })
     setBusy(false); notify('Groupe créé 🎉'); onDone(data)
   }
-
   return (
     <>
       <div className="topbar"><button className="ghost-btn" onClick={onCancel}>← Annuler</button><b className="display">Nouveau groupe</b><span style={{ width: 60 }} /></div>
@@ -170,7 +164,6 @@ function CreateGroup({ uid, notify, onDone, onCancel }) {
           <div className="field"><label>Mise par personne (€)</label>
             <input className="input" type="number" inputMode="decimal" value={f.stake} onChange={e => set('stake', e.target.value)} /></div>
         </div>
-
         <div className="card">
           <h3 style={{ fontSize: 15, marginBottom: 12 }}>Barème de points</h3>
           {[['exact', 'Score exact'], ['outcome', 'Bon résultat (1N2)'], ['goaldiff', 'Bonne différence de buts (bonus)'], ['scorer', 'Par buteur trouvé']].map(([k, lb]) =>
@@ -179,14 +172,12 @@ function CreateGroup({ uid, notify, onDone, onCancel }) {
               <input className="input" style={{ width: 80 }} type="number" value={f[k]} onChange={e => set(k, Number(e.target.value))} />
             </div>)}
         </div>
-
         <div className="card">
           <label className="check"><input type="checkbox" checked={f.scorers} onChange={e => set('scorers', e.target.checked)} />
             <div><div className="t">Pari sur les buteurs</div><div className="d">Chacun peut désigner des buteurs pour gagner des points bonus</div></div></label>
           <label className="check"><input type="checkbox" checked={f.fantasy} onChange={e => set('fantasy', e.target.checked)} />
             <div><div className="t">Mode Fantasy (équipe type) <span className="tag" style={{ marginLeft: 4 }}>bientôt</span></div><div className="d">Composer une équipe avec budget et transferts entre phases</div></div></label>
         </div>
-
         <button className="btn" onClick={create} disabled={busy}>{busy ? '…' : 'Créer le groupe'}</button>
       </div>
     </>
@@ -223,31 +214,60 @@ function JoinGroup({ uid, notify, onDone, onCancel }) {
 /* ================= MATCHS & PARIS ================= */
 function Matchs({ group, uid, notify }) {
   const [fixtures, setFixtures] = useState(null)
-  const [preds, setPreds] = useState({})       // fixture_id -> {pred1,pred2}
+  const [preds, setPreds] = useState({})      // fixture_id -> {id, pred1, pred2}
+  const [scorers, setScorers] = useState({})  // fixture_id -> [player_name, ...] (équipe1 + équipe2 mélangés)
+  const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
 
   useEffect(() => {
     (async () => {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       setFixtures(fx || [])
-      const { data: pr } = await supabase.from('predictions').select('fixture_id,pred1,pred2').eq('group_id', group.id).eq('user_id', uid)
-      const map = {}; (pr || []).forEach(p => map[p.fixture_id] = { pred1: p.pred1, pred2: p.pred2 })
-      setPreds(map)
+
+      // joueurs (pour les listes déroulantes de buteurs)
+      const { data: pl } = await supabase.from('players').select('name,team_code,position').order('name')
+      const map = {}
+      ;(pl || []).forEach(p => { (map[p.team_code] = map[p.team_code] || []).push({ name: p.name, position: p.position }) })
+      setByTeam(map)
+
+      // pronos de score (avec l'id du prono)
+      const { data: pr } = await supabase.from('predictions').select('id,fixture_id,pred1,pred2').eq('group_id', group.id).eq('user_id', uid)
+      const pm = {}; (pr || []).forEach(p => pm[p.fixture_id] = { id: p.id, pred1: p.pred1, pred2: p.pred2 })
+      setPreds(pm)
+
+      // buteurs déjà choisis
+      const ids = (pr || []).map(p => p.id)
+      if (ids.length) {
+        const { data: sc } = await supabase.from('prediction_scorers').select('prediction_id,player_name').in('prediction_id', ids)
+        const predToFx = {}; (pr || []).forEach(p => predToFx[p.id] = p.fixture_id)
+        const sm = {}
+        ;(sc || []).forEach(s => { const fId = predToFx[s.prediction_id]; (sm[fId] = sm[fId] || []).push(s.player_name) })
+        setScorers(sm)
+      }
     })()
   }, [group.id, uid])
 
-  const save = async (fx, pred1, pred2) => {
-    setPreds(s => ({ ...s, [fx.id]: { pred1, pred2 } }))
-    const { error } = await supabase.from('predictions').upsert(
+  // enregistre le score ET les buteurs en une fois
+  const save = async (fx, pred1, pred2, names) => {
+    setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), pred1, pred2 } }))
+    const { data, error } = await supabase.from('predictions').upsert(
       { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
-      { onConflict: 'group_id,user_id,fixture_id' })
-    if (error) notify('Sauvegarde impossible'); else notify('Prono enregistré ✓')
+      { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
+    if (error || !data) { notify('Sauvegarde impossible'); return }
+    const predId = data.id
+    setPreds(s => ({ ...s, [fx.id]: { id: predId, pred1, pred2 } }))
+    // on remplace la liste des buteurs (simple et fiable)
+    await supabase.from('prediction_scorers').delete().eq('prediction_id', predId)
+    const clean = (names || []).filter(Boolean)
+    if (clean.length) {
+      await supabase.from('prediction_scorers').insert(clean.map(n => ({ prediction_id: predId, player_name: n })))
+    }
+    notify('Prono enregistré ✓')
   }
 
   if (fixtures === null) return <div className="center"><div className="spinner" /></div>
   const list = fixtures.filter(f => f.phase === phase)
   const days = [...new Set(list.map(f => dayKey(f.kickoff_utc)))]
-
   return (
     <>
       <div className="seg" style={{ marginBottom: 14, overflowX: 'auto' }}>
@@ -257,7 +277,7 @@ function Matchs({ group, uid, notify }) {
         <div key={d}>
           <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
           {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} onSave={save} />
+            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} onSave={save} />
           ))}
         </div>
       ))}
@@ -265,14 +285,54 @@ function Matchs({ group, uid, notify }) {
   )
 }
 
-function FixtureCard({ fx, pred, group, onSave }) {
+function ScorerGroup({ team, list, values, disabled, onPick }) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>⚽ Buteurs {team}</div>
+      {!list
+        ? <div className="muted" style={{ fontSize: 12, fontStyle: 'italic' }}>Équipe pas encore connue</div>
+        : values.map((v, i) => (
+          <select key={i} className="input" style={{ marginBottom: 6 }} value={v} disabled={disabled}
+            onChange={e => onPick(i, e.target.value)}>
+            <option value="">— choisir un buteur —</option>
+            {list.map(p => <option key={p.name} value={p.name}>{p.name}{p.position ? ' (' + p.position + ')' : ''}</option>)}
+          </select>
+        ))}
+    </div>
+  )
+}
+
+function FixtureCard({ fx, pred, group, byTeam, scorers, onSave }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
   const [p1, setP1] = useState(pred?.pred1 ?? 0)
   const [p2, setP2] = useState(pred?.pred2 ?? 0)
+  const [sc1, setSc1] = useState([])
+  const [sc2, setSc2] = useState([])
+  const prefilled = useRef(false)
+
   useEffect(() => { setP1(pred?.pred1 ?? 0); setP2(pred?.pred2 ?? 0) }, [pred])
 
+  // pré-remplissage des buteurs déjà sauvegardés (une seule fois, quand les joueurs sont chargés)
+  useEffect(() => {
+    if (prefilled.current) return
+    if (!byTeam || !Object.keys(byTeam).length) return
+    const inT1 = new Set((byTeam[teamCode(fx.team1)] || []).map(p => p.name))
+    const a1 = [], a2 = []
+    ;(scorers || []).forEach(n => { if (inT1.has(n)) a1.push(n); else a2.push(n) })
+    setSc1(resize(a1, pred?.pred1 ?? 0))
+    setSc2(resize(a2, pred?.pred2 ?? 0))
+    prefilled.current = true
+  }, [byTeam, scorers, pred, fx])
+
+  // ajuste le nombre de cases buteurs quand le score change
+  useEffect(() => { setSc1(a => resize(a, p1)) }, [p1])
+  useEffect(() => { setSc2(a => resize(a, p2)) }, [p2])
+
+  const commit = (np1, np2, ns1, ns2) => onSave(fx, np1, np2, [...ns1, ...ns2])
+
   const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
+  const showScorers = group.scorers_enabled && !finished && (p1 > 0 || p2 > 0)
 
   return (
     <div className="card fx">
@@ -284,12 +344,22 @@ function FixtureCard({ fx, pred, group, onSave }) {
         <div className="team r">{fx.team1}</div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input className="score-in" inputMode="numeric" disabled={locked} value={p1}
-            onChange={e => setP1(clamp(e.target.value))} onBlur={() => !locked && onSave(fx, p1, p2)} />
+            onChange={e => setP1(clamp(e.target.value))} onBlur={() => !locked && commit(p1, p2, sc1, sc2)} />
           <input className="score-in" inputMode="numeric" disabled={locked} value={p2}
-            onChange={e => setP2(clamp(e.target.value))} onBlur={() => !locked && onSave(fx, p1, p2)} />
+            onChange={e => setP2(clamp(e.target.value))} onBlur={() => !locked && commit(p1, p2, sc1, sc2)} />
         </div>
         <div className="team">{fx.team2}</div>
       </div>
+
+      {showScorers && (
+        <div style={{ marginTop: 10 }}>
+          {p1 > 0 && <ScorerGroup team={fx.team1} list={byTeam[teamCode(fx.team1)]} values={sc1} disabled={locked}
+            onPick={(i, v) => setSc1(arr => { const c = [...arr]; c[i] = v; commit(p1, p2, c, sc2); return c })} />}
+          {p2 > 0 && <ScorerGroup team={fx.team2} list={byTeam[teamCode(fx.team2)]} values={sc2} disabled={locked}
+            onPick={(i, v) => setSc2(arr => { const c = [...arr]; c[i] = v; commit(p1, p2, sc1, c); return c })} />}
+        </div>
+      )}
+
       <div className="fx-foot">
         {finished
           ? <><span className="realscore">Résultat : {fx.score1}–{fx.score2}</span><span className="pts">+{pts} pts</span></>
@@ -299,7 +369,9 @@ function FixtureCard({ fx, pred, group, onSave }) {
     </div>
   )
 }
+
 const clamp = (v) => Math.max(0, Math.min(20, parseInt(v || 0, 10) || 0))
+
 function scoreOf(p1, p2, r1, r2, g) {
   if (r1 == null || r2 == null) return 0
   if (p1 === r1 && p2 === r2) return g.pts_exact
@@ -324,7 +396,6 @@ function Classement({ group, uid }) {
       setRows(merged)
     })()
   }, [group.id])
-
   if (rows === null) return <div className="center"><div className="spinner" /></div>
   return (
     <>
