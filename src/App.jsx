@@ -439,9 +439,9 @@ function Cagnotte({ group }) {
       </div>
       <div className="card" style={{ marginTop: 12 }}>
         <h3 style={{ fontSize: 14, marginBottom: 8 }}>Répartition suggérée</h3>
-        <div className="lb-row"><div className="lb-name">🥇 1er</div><div className="lb-pts">{Math.round(pot * 0.6)}€</div></div>
+        <div className="lb-row"><div className="lb-name">🥇 1er</div><div className="lb-pts">{Math.round(pot * 0.5)}€</div></div>
         <div className="lb-row"><div className="lb-name">🥈 2e</div><div className="lb-pts">{Math.round(pot * 0.3)}€</div></div>
-        <div className="lb-row"><div className="lb-name">🥉 3e</div><div className="lb-pts">{Math.round(pot * 0.1)}€</div></div>
+        <div className="lb-row"><div className="lb-name">🥉 3e</div><div className="lb-pts">{Math.round(pot * 0.2)}€</div></div>
       </div>
     </>
   )
