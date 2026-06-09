@@ -86,9 +86,10 @@ function Shell({ session, notify }) {
         {tab === 'classement' && <Classement group={group} uid={uid} />}
         {tab === 'cagnotte' && <Cagnotte group={group} />}
         {tab === 'fantasy' && (group.fantasy_enabled ? <Fantasy group={group} uid={uid} notify={notify} /> : <FantasySoon group={group} />)}
+        {tab === 'joueurs' && <PlayerRanking />}
       </div>
       <nav className="nav">
-        {[['matchs', '⚽', 'Matchs'], ['classement', '🏆', 'Classement'], ['cagnotte', '💰', 'Cagnotte'], ['fantasy', '🌟', 'Fantasy']].map(([k, ic, lb]) =>
+        {[['matchs', '⚽', 'Matchs'], ['classement', '🏆', 'Classement'], ['cagnotte', '💰', 'Cagnotte'], ['fantasy', '🌟', 'Fantasy'], ['joueurs', '📊', 'Joueurs']].map(([k, ic, lb]) =>
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}><span className="ic">{ic}</span>{lb}</button>)}
       </nav>
     </>
@@ -562,6 +563,50 @@ function Fantasy({ group, uid, notify }) {
       <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 4 }}>
         Ton équipe se sauvegarde toute seule. Le ⭐ désigne ton capitaine (points ×2).
       </p>
+    </>
+  )
+}
+
+/* ================= CLASSEMENT DES JOUEURS PAR SECTEUR ================= */
+const SECTORS = [
+  { key: 'Goalkeeper', label: 'Gardiens' },
+  { key: 'Defender', label: 'Défenseurs' },
+  { key: 'Midfielder', label: 'Milieux' },
+  { key: 'Attacker', label: 'Attaquants' },
+]
+
+function PlayerRanking() {
+  const [rows, setRows] = useState(null)
+  const [sector, setSector] = useState('Attacker')
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('player_ranking').select('*').order('total_points', { ascending: false })
+      setRows(data || [])
+    })()
+  }, [])
+  if (rows === null) return <div className="center"><div className="spinner" /></div>
+  const anyPlayed = rows.some(r => r.matches > 0)
+  const list = rows.filter(r => r.position === sector).slice(0, 30)
+  return (
+    <>
+      <h2 style={{ fontSize: 24, margin: '4px 2px 12px' }}>Classement des joueurs</h2>
+      {!anyPlayed &&
+        <div className="card" style={{ marginBottom: 12 }}>
+          <span className="muted" style={{ fontSize: 13 }}>📊 Ce classement se remplit tout seul au fil des matchs. Reviens après les premières rencontres !</span>
+        </div>}
+      <div className="seg" style={{ marginBottom: 12, overflowX: 'auto' }}>
+        {SECTORS.map(s => <button key={s.key} className={sector === s.key ? 'on' : ''} onClick={() => setSector(s.key)} style={{ whiteSpace: 'nowrap' }}>{s.label}</button>)}
+      </div>
+      <div className="card" style={{ padding: 0 }}>
+        {list.map((r, i) => (
+          <div className="lb-row" key={r.id}>
+            <div className={'rank r' + (i + 1)}>{i + 1}</div>
+            <div className="lb-name">{r.name}<div className="lb-sub">{r.team_code} · {r.matches} match{r.matches > 1 ? 's' : ''}</div></div>
+            <div className="lb-pts">{r.total_points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
+          </div>
+        ))}
+        {!list.length && <div className="empty" style={{ padding: 20 }}>Aucun joueur dans ce secteur.</div>}
+      </div>
     </>
   )
 }
