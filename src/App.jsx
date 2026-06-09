@@ -386,14 +386,18 @@ function Classement({ group, uid }) {
   useEffect(() => {
     (async () => {
       const { data: members } = await supabase.from('group_members').select('user_id, profiles(display_name)').eq('group_id', group.id)
-      const { data: lb } = await supabase.from('leaderboard').select('*').eq('group_id', group.id)
+      const { data: lb } = await supabase.from('general_standings').select('*').eq('group_id', group.id)
       const ptsMap = {}; (lb || []).forEach(r => ptsMap[r.user_id] = r)
-      const merged = (members || []).map(m => ({
-        user_id: m.user_id,
-        name: m.profiles?.display_name || '—',
-        points: ptsMap[m.user_id]?.points || 0,
-        good: ptsMap[m.user_id]?.good_results || 0,
-      })).sort((a, b) => b.points - a.points)
+      const merged = (members || []).map(m => {
+        const r = ptsMap[m.user_id] || {}
+        return {
+          user_id: m.user_id,
+          name: m.profiles?.display_name || '—',
+          points: r.total_points || 0,
+          bonus: (r.bonus_group || 0) + (r.bonus_final || 0),
+          good: r.good_results || 0,
+        }
+      }).sort((a, b) => b.points - a.points)
       setRows(merged)
     })()
   }, [group.id])
@@ -405,7 +409,7 @@ function Classement({ group, uid }) {
         {rows.map((r, i) => (
           <div className="lb-row" key={r.user_id}>
             <div className={'rank r' + (i + 1)}>{i + 1}</div>
-            <div className="lb-name">{r.name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.good} bons résultats</div></div>
+            <div className="lb-name">{r.name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.good} bons résultats{r.bonus > 0 ? ` · +${r.bonus} bonus fantasy 🌟` : ''}</div></div>
             <div className="lb-pts">{r.points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
           </div>
         ))}
