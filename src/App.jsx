@@ -85,7 +85,7 @@ function Shell({ session, notify }) {
         {tab === 'matchs' && <Matchs group={group} uid={uid} notify={notify} />}
         {tab === 'classement' && <Classement group={group} uid={uid} />}
         {tab === 'cagnotte' && <Cagnotte group={group} />}
-        {tab === 'fantasy' && <FantasySoon group={group} />}
+        {tab === 'fantasy' && (group.fantasy_enabled ? <Fantasy group={group} uid={uid} notify={notify} /> : <FantasySoon group={group} />)}
       </div>
       <nav className="nav">
         {[['matchs', '⚽', 'Matchs'], ['classement', '🏆', 'Classement'], ['cagnotte', '💰', 'Cagnotte'], ['fantasy', '🌟', 'Fantasy']].map(([k, ic, lb]) =>
@@ -438,6 +438,130 @@ function Cagnotte({ group }) {
         <div className="lb-row"><div className="lb-name">🥈 2e</div><div className="lb-pts">{Math.round(pot * 0.3)}€</div></div>
         <div className="lb-row"><div className="lb-name">🥉 3e</div><div className="lb-pts">{Math.round(pot * 0.1)}€</div></div>
       </div>
+    </>
+  )
+}
+
+/* ================= FANTASY : composition de l'équipe ================= */
+const FANTASY_PHASE = 'group'
+const FORMATION = [
+  { key: 'Goalkeeper', label: 'Gardien', need: 1, single: 'gardien' },
+  { key: 'Defender', label: 'Défenseurs', need: 4, single: 'défenseur' },
+  { key: 'Midfielder', label: 'Milieux', need: 4, single: 'milieu' },
+  { key: 'Attacker', label: 'Attaquants', need: 2, single: 'attaquant' },
+]
+
+function Fantasy({ group, uid, notify }) {
+  const [players, setPlayers] = useState(null)
+  const [picks, setPicks] = useState([])     // [{player_id, position, name, team_code, is_captain}]
+  const [adding, setAdding] = useState(null)  // position en cours d'ajout
+  const [q, setQ] = useState('')
+  const squadRef = useRef(null)
+
+  useEffect(() => {
+    (async () => {
+      const { data: pl } = await supabase.from('players').select('id,name,team_code,position').order('name')
+      setPlayers(pl || [])
+      const { data: sq } = await supabase.from('fantasy_squads')
+        .select('id').eq('group_id', group.id).eq('user_id', uid).eq('phase', FANTASY_PHASE).maybeSingle()
+      if (sq) {
+        squadRef.current = sq.id
+        const { data: fp } = await supabase.from('fantasy_picks').select('player_id,is_captain').eq('squad_id', sq.id)
+        const byId = {}; (pl || []).forEach(p => byId[p.id] = p)
+        setPicks((fp || []).map(x => {
+          const p = byId[x.player_id] || {}
+          return { player_id: x.player_id, position: p.position, name: p.name, team_code: p.team_code, is_captain: x.is_captain }
+        }))
+      }
+    })()
+  }, [group.id, uid])
+
+  const countPos = (key) => picks.filter(p => p.position === key).length
+  const total = picks.length
+  const hasCaptain = picks.some(p => p.is_captain)
+  const complete = FORMATION.every(f => countPos(f.key) === f.need) && hasCaptain
+
+  const saveSquad = async (list) => {
+    let id = squadRef.current
+    if (!id) {
+      const { data, error } = await supabase.from('fantasy_squads')
+        .insert({ group_id: group.id, user_id: uid, phase: FANTASY_PHASE, budget: 0 }).select('id').single()
+      if (error || !data) { notify('Sauvegarde impossible'); return }
+      id = data.id; squadRef.current = id
+    }
+    await supabase.from('fantasy_picks').delete().eq('squad_id', id)
+    if (list.length) {
+      await supabase.from('fantasy_picks').insert(list.map(p => ({ squad_id: id, player_id: p.player_id, is_captain: !!p.is_captain })))
+    }
+    notify('Équipe enregistrée ✓')
+  }
+
+  const addPlayer = (p) => {
+    const need = FORMATION.find(f => f.key === p.position)?.need ?? 0
+    if (picks.filter(x => x.position === p.position).length >= need) return notify('Ce secteur est complet')
+    if (picks.some(x => x.player_id === p.id)) return notify('Déjà dans ton équipe')
+    const next = [...picks, { player_id: p.id, position: p.position, name: p.name, team_code: p.team_code, is_captain: false }]
+    setPicks(next); setQ(''); saveSquad(next)
+    if (next.filter(x => x.position === p.position).length >= need) setAdding(null)
+  }
+  const removePlayer = (player_id) => { const next = picks.filter(p => p.player_id !== player_id); setPicks(next); saveSquad(next) }
+  const setCaptain = (player_id) => { const next = picks.map(p => ({ ...p, is_captain: p.player_id === player_id })); setPicks(next); saveSquad(next) }
+
+  if (players === null) return <div className="center"><div className="spinner" /></div>
+
+  const pickedIds = new Set(picks.map(p => p.player_id))
+  const filtered = adding
+    ? players.filter(p => p.position === adding && !pickedIds.has(p.id) && (
+      p.name.toLowerCase().includes(q.toLowerCase()) || (p.team_code || '').toLowerCase().includes(q.toLowerCase())
+    )).slice(0, 60)
+    : []
+
+  return (
+    <>
+      <h2 style={{ fontSize: 24, margin: '4px 2px 10px' }}>Mon équipe Fantasy</h2>
+      <div className="card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div><b>{total}/11</b> joueurs</div>
+        <span className={complete ? 'tag done' : 'tag'}>{complete ? 'Équipe complète ✅' : (total === 11 && !hasCaptain ? 'Choisis un capitaine ⭐' : 'À compléter')}</span>
+      </div>
+
+      {FORMATION.map(sec => {
+        const chosen = picks.filter(p => p.position === sec.key)
+        const full = chosen.length >= sec.need
+        return (
+          <div className="card" key={sec.key} style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <b>{sec.label}</b><span className="muted">{chosen.length}/{sec.need}</span>
+            </div>
+            {chosen.map(p => (
+              <div key={p.player_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+                <button className="ghost-btn" title="Désigner capitaine" onClick={() => setCaptain(p.player_id)} style={{ fontSize: 18, padding: 0 }}>{p.is_captain ? '⭐' : '☆'}</button>
+                <div style={{ flex: 1 }}>{p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}</span></div>
+                <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>
+              </div>
+            ))}
+            {!full && adding !== sec.key &&
+              <button className="btn alt" style={{ marginTop: 6 }} onClick={() => { setAdding(sec.key); setQ('') }}>＋ Ajouter un {sec.single}</button>}
+            {adding === sec.key && (
+              <div style={{ marginTop: 8 }}>
+                <input className="input" autoFocus placeholder="Tape un nom ou un pays…" value={q} onChange={e => setQ(e.target.value)} />
+                <div style={{ maxHeight: 240, overflowY: 'auto', marginTop: 6 }}>
+                  {filtered.map(p => (
+                    <div key={p.id} onClick={() => addPlayer(p)} style={{ padding: '8px 6px', borderBottom: '1px solid rgba(125,125,125,.15)', cursor: 'pointer' }}>
+                      {p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}</span>
+                    </div>
+                  ))}
+                  {!filtered.length && <div className="muted" style={{ padding: 8, fontSize: 13 }}>Aucun joueur trouvé.</div>}
+                </div>
+                <button className="ghost-btn" style={{ marginTop: 6 }} onClick={() => { setAdding(null); setQ('') }}>Fermer</button>
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+        Ton équipe se sauvegarde toute seule. Le ⭐ désigne ton capitaine (points ×2).
+      </p>
     </>
   )
 }
