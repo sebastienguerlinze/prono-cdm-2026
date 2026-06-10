@@ -14,6 +14,19 @@ const TEAM_FIX = { 'DR Congo': 'Congo DR', 'Cape Verde': 'Cape Verde Islands', '
 const teamCode = (name) => (name ? (TEAM_FIX[name] || name) : name)
 const resize = (arr, n) => { const out = (arr || []).slice(0, n); while (out.length < n) out.push(''); return out }
 
+// charge TOUS les joueurs par paquets de 1000 (contourne la limite de 1000 lignes de Supabase)
+async function fetchAllPlayers(cols) {
+  let all = [], from = 0; const size = 1000
+  while (true) {
+    const { data, error } = await supabase.from('players').select(cols).order('name').range(from, from + size - 1)
+    if (error || !data || !data.length) break
+    all = all.concat(data)
+    if (data.length < size) break
+    from += size
+  }
+  return all
+}
+
 /* ================= APP ================= */
 export default function App() {
   const [session, setSession] = useState(undefined)
@@ -33,10 +46,14 @@ export default function App() {
   )
 }
 
-/* ================= AUTH (prénom uniquement, sans e-mail) ================= */
+/* ================= AUTH (création au prénom OU reconnexion e-mail) ================= */
 function Auth({ notify }) {
+  const [mode, setMode] = useState('signup') // 'signup' = prénom · 'login' = e-mail + mot de passe
   const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [pwd, setPwd] = useState('')
   const [busy, setBusy] = useState(false)
+
   const enter = async () => {
     if (!name.trim()) return notify('Indique ton prénom')
     setBusy(true)
@@ -48,6 +65,17 @@ function Auth({ notify }) {
     if (user) await supabase.from('profiles').upsert({ id: user.id, display_name: name.trim() })
     setBusy(false)
   }
+
+  const login = async () => {
+    if (!email.trim() || !pwd) return notify('E-mail et mot de passe requis')
+    setBusy(true)
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password: pwd })
+    setBusy(false)
+    if (error) return notify('E-mail ou mot de passe incorrect')
+  }
+
+  const linkStyle = { color: 'var(--accent, #12914e)', cursor: 'pointer', textDecoration: 'underline' }
+
   return (
     <>
       <div className="hero">
@@ -57,11 +85,29 @@ function Auth({ notify }) {
       </div>
       <div className="wrap">
         <div className="card">
-          <div className="field"><label>Ton prénom (visible au classement)</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Sébastien"
-              onKeyDown={e => e.key === 'Enter' && enter()} /></div>
-          <button className="btn" onClick={enter} disabled={busy}>{busy ? '…' : "C'est parti !"}</button>
-          <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 12 }}>Pas de mot de passe : tu entres direct avec ton prénom.</p>
+          {mode === 'signup' ? (
+            <>
+              <div className="field"><label>Ton prénom (visible au classement)</label>
+                <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Sébastien"
+                  onKeyDown={e => e.key === 'Enter' && enter()} /></div>
+              <button className="btn" onClick={enter} disabled={busy}>{busy ? '…' : "C'est parti !"}</button>
+              <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 14 }}>
+                Déjà un compte sécurisé ? <span style={linkStyle} onClick={() => setMode('login')}>Se reconnecter</span>
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="field"><label>E-mail</label>
+                <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="ton@email.com" /></div>
+              <div className="field"><label>Mot de passe</label>
+                <input className="input" type="password" value={pwd} onChange={e => setPwd(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && login()} placeholder="••••••" /></div>
+              <button className="btn" onClick={login} disabled={busy}>{busy ? '…' : 'Se reconnecter'}</button>
+              <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 14 }}>
+                Première fois ? <span style={linkStyle} onClick={() => setMode('signup')}>Créer un compte avec mon prénom</span>
+              </p>
+            </>
+          )}
         </div>
       </div>
     </>
@@ -73,7 +119,7 @@ function Shell({ session, notify }) {
   const uid = session.user.id
   const [group, setGroup] = useState(null) // groupe ouvert
   const [tab, setTab] = useState('matchs')
-  if (!group) return <Home uid={uid} notify={notify} onOpen={(g) => { setGroup(g); setTab('matchs') }} onLogout={() => supabase.auth.signOut()} />
+  if (!group) return <Home uid={uid} email={session.user.email} notify={notify} onOpen={(g) => { setGroup(g); setTab('matchs') }} onLogout={() => supabase.auth.signOut()} />
   return (
     <>
       <div className="topbar">
@@ -96,8 +142,58 @@ function Shell({ session, notify }) {
   )
 }
 
+/* ================= SÉCURISER SON COMPTE (e-mail + mot de passe) ================= */
+function SecureAccount({ email, notify }) {
+  const [open, setOpen] = useState(false)
+  const [mail, setMail] = useState('')
+  const [pwd, setPwd] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  if (email) {
+    return (
+      <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #12914e' }}>
+        <div style={{ fontSize: 13 }}>✅ <b>Compte sécurisé</b> — tu peux te reconnecter partout avec <b>{email}</b>.</div>
+      </div>
+    )
+  }
+
+  const secure = async () => {
+    if (!mail.trim() || pwd.length < 6) return notify('E-mail valide + mot de passe (6 caractères min)')
+    setBusy(true)
+    const { error } = await supabase.auth.updateUser({ email: mail.trim().toLowerCase(), password: pwd })
+    setBusy(false)
+    if (error) return notify(error.message)
+    notify('Compte sécurisé ✓ Tu peux maintenant le retrouver partout')
+    setOpen(false)
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #e0a200' }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>🔒 Sécurise ton compte</div>
+      <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
+        Ajoute un e-mail + mot de passe pour retrouver tes pronos sur n'importe quel appareil. Sans ça, une déconnexion = perte d'accès à tes pronos.
+      </div>
+      {!open ? (
+        <button className="btn" onClick={() => setOpen(true)}>Sécuriser mon compte</button>
+      ) : (
+        <>
+          <div className="field"><label>E-mail</label>
+            <input className="input" type="email" value={mail} onChange={e => setMail(e.target.value)} placeholder="ton@email.com" /></div>
+          <div className="field"><label>Mot de passe (6 caractères min)</label>
+            <input className="input" type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder="••••••" /></div>
+          <div className="row">
+            <button className="btn" onClick={secure} disabled={busy}>{busy ? '…' : 'Valider'}</button>
+            <button className="btn alt" onClick={() => setOpen(false)} disabled={busy}>Annuler</button>
+          </div>
+          <p className="muted" style={{ fontSize: 11.5, marginTop: 10 }}>Aucun e-mail ne te sera envoyé : il sert juste à te reconnecter.</p>
+        </>
+      )}
+    </div>
+  )
+}
+
 /* ================= HOME : liste des groupes ================= */
-function Home({ uid, notify, onOpen, onLogout }) {
+function Home({ uid, email, notify, onOpen, onLogout }) {
   const [groups, setGroups] = useState(null)
   const [mode, setMode] = useState(null) // create | join
   const load = useCallback(async () => {
@@ -114,6 +210,7 @@ function Home({ uid, notify, onOpen, onLogout }) {
         <button className="ghost-btn" onClick={onLogout}>Déconnexion</button>
       </div>
       <div className="wrap">
+        <SecureAccount email={email} notify={notify} />
         <h2 style={{ fontSize: 24, margin: '6px 2px 16px' }}>Mes groupes</h2>
         {groups === null ? <div className="center"><div className="spinner" /></div> :
           groups.length === 0 ? <div className="empty">Aucun groupe pour l'instant.<br />Crée le tien ou rejoins celui d'un ami 👇</div> :
@@ -226,8 +323,8 @@ function Matchs({ group, uid, notify }) {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       setFixtures(fx || [])
 
-      // joueurs (pour les listes déroulantes de buteurs)
-      const { data: pl } = await supabase.from('players').select('name,team_code,position').order('name')
+      // joueurs (pour les listes déroulantes de buteurs) — tous, par paquets
+      const pl = await fetchAllPlayers('name,team_code,position')
       const map = {}
       ;(pl || []).forEach(p => { (map[p.team_code] = map[p.team_code] || []).push({ name: p.name, position: p.position }) })
       setByTeam(map)
@@ -468,7 +565,7 @@ function Fantasy({ group, uid, notify }) {
 
   useEffect(() => {
     (async () => {
-      const { data: pl } = await supabase.from('players').select('id,name,team_code,position').order('name')
+      const pl = await fetchAllPlayers('id,name,team_code,position')
       setPlayers(pl || [])
       const { data: sq } = await supabase.from('fantasy_squads')
         .select('id').eq('group_id', group.id).eq('user_id', uid).eq('phase', FANTASY_PHASE).maybeSingle()
