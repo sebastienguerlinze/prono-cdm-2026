@@ -219,6 +219,7 @@ function Matchs({ group, uid, notify }) {
   const [scorers, setScorers] = useState({})  // fixture_id -> [player_name, ...] (équipe1 + équipe2 mélangés)
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
+  const [ready, setReady] = useState(false)    // toutes les données chargées ?
 
   useEffect(() => {
     (async () => {
@@ -245,6 +246,7 @@ function Matchs({ group, uid, notify }) {
         ;(sc || []).forEach(s => { const fId = predToFx[s.prediction_id]; (sm[fId] = sm[fId] || []).push(s.player_name) })
         setScorers(sm)
       }
+      setReady(true)
     })()
   }, [group.id, uid])
 
@@ -278,7 +280,7 @@ function Matchs({ group, uid, notify }) {
         <div key={d}>
           <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
           {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} onSave={save} />
+            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} />
           ))}
         </div>
       ))}
@@ -303,7 +305,7 @@ function ScorerGroup({ team, list, values, disabled, onPick }) {
   )
 }
 
-function FixtureCard({ fx, pred, group, byTeam, scorers, onSave }) {
+function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
   const [p1, setP1] = useState(pred?.pred1 ?? 0)
@@ -314,9 +316,10 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, onSave }) {
 
   useEffect(() => { setP1(pred?.pred1 ?? 0); setP2(pred?.pred2 ?? 0) }, [pred])
 
-  // pré-remplissage des buteurs déjà sauvegardés (une seule fois, quand les joueurs sont chargés)
+  // pré-remplissage des buteurs déjà sauvegardés (une seule fois, quand TOUTES les données sont chargées)
   useEffect(() => {
     if (prefilled.current) return
+    if (!ready) return
     if (!byTeam || !Object.keys(byTeam).length) return
     const inT1 = new Set((byTeam[teamCode(fx.team1)] || []).map(p => p.name))
     const a1 = [], a2 = []
@@ -324,7 +327,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, onSave }) {
     setSc1(resize(a1, pred?.pred1 ?? 0))
     setSc2(resize(a2, pred?.pred2 ?? 0))
     prefilled.current = true
-  }, [byTeam, scorers, pred, fx])
+  }, [ready, byTeam, scorers, pred, fx])
 
   // ajuste le nombre de cases buteurs quand le score change
   useEffect(() => { setSc1(a => resize(a, p1)) }, [p1])
