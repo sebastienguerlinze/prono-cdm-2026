@@ -30,6 +30,7 @@ async function fetchAllPlayers(cols) {
 /* ================= APP ================= */
 export default function App() {
   const [session, setSession] = useState(undefined)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [toast, setToast] = useState('')
   const notify = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 2600) }, [])
   useEffect(() => {
@@ -37,10 +38,16 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => sub.subscription.unsubscribe()
   }, [])
+  useEffect(() => {
+    const uid = session?.user?.id
+    if (!uid) { setIsAdmin(false); return }
+    supabase.from('profiles').select('is_admin').eq('id', uid).maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data?.is_admin))
+  }, [session])
   if (session === undefined) return <div className="center"><div className="spinner" /></div>
   return (
     <div className="app">
-      {!session ? <Auth notify={notify} /> : <Shell session={session} notify={notify} />}
+      {!session ? <Auth notify={notify} /> : <Shell session={session} isAdmin={isAdmin} notify={notify} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -115,11 +122,11 @@ function Auth({ notify }) {
 }
 
 /* ================= SHELL (navigation) ================= */
-function Shell({ session, notify }) {
+function Shell({ session, isAdmin, notify }) {
   const uid = session.user.id
   const [group, setGroup] = useState(null) // groupe ouvert
   const [tab, setTab] = useState('matchs')
-  if (!group) return <Home uid={uid} email={session.user.email} notify={notify} onOpen={(g) => { setGroup(g); setTab('matchs') }} onLogout={() => supabase.auth.signOut()} />
+  if (!group) return <Home uid={uid} email={session.user.email} isAdmin={isAdmin} notify={notify} onOpen={(g) => { setGroup(g); setTab('matchs') }} onLogout={() => supabase.auth.signOut()} />
   return (
     <>
       <div className="topbar">
@@ -193,7 +200,7 @@ function SecureAccount({ email, notify }) {
 }
 
 /* ================= HOME : liste des groupes ================= */
-function Home({ uid, email, notify, onOpen, onLogout }) {
+function Home({ uid, email, isAdmin, notify, onOpen, onLogout }) {
   const [groups, setGroups] = useState(null)
   const [mode, setMode] = useState(null) // create | join
   const load = useCallback(async () => {
@@ -226,9 +233,10 @@ function Home({ uid, email, notify, onOpen, onLogout }) {
               ))}
             </div>}
         <div className="row" style={{ marginTop: 18 }}>
-          <button className="btn" onClick={() => setMode('create')}>＋ Créer</button>
+          {isAdmin && <button className="btn" onClick={() => setMode('create')}>＋ Créer</button>}
           <button className="btn alt" onClick={() => setMode('join')}>Rejoindre</button>
         </div>
+        {isAdmin && <p className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 10 }}>Mode organisateur : toi seul peux créer un groupe.</p>}
       </div>
     </>
   )
