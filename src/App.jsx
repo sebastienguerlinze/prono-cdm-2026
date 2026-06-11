@@ -210,6 +210,7 @@ function Home({ uid, email, isAdmin, notify, onOpen, onLogout }) {
   useEffect(() => { load() }, [load])
   if (mode === 'create') return <CreateGroup uid={uid} notify={notify} onDone={(g) => { setMode(null); load(); if (g) onOpen(g) }} onCancel={() => setMode(null)} />
   if (mode === 'join') return <JoinGroup uid={uid} notify={notify} onDone={() => { setMode(null); load() }} onCancel={() => setMode(null)} />
+  if (mode === 'members') return <Members notify={notify} onCancel={() => setMode(null)} />
   return (
     <>
       <div className="topbar">
@@ -237,6 +238,43 @@ function Home({ uid, email, isAdmin, notify, onOpen, onLogout }) {
           <button className="btn alt" onClick={() => setMode('join')}>Rejoindre</button>
         </div>
         {isAdmin && <p className="muted" style={{ fontSize: 11.5, textAlign: 'center', marginTop: 10 }}>Mode organisateur : toi seul peux créer un groupe.</p>}
+        {isAdmin && <button className="btn alt" style={{ marginTop: 12, width: '100%' }} onClick={() => setMode('members')}>👥 Membres</button>}
+      </div>
+    </>
+  )
+}
+
+/* ================= MEMBRES (admin) ================= */
+function Members({ notify, onCancel }) {
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.rpc('admin_list_members')
+      if (error) { notify('Accès refusé'); setRows([]); return }
+      setRows(data || [])
+    })()
+  }, [])
+  const fmtDate = (iso) => iso ? new Intl.DateTimeFormat('fr-BE', { timeZone: BX, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)) : '—'
+  return (
+    <>
+      <div className="topbar"><button className="ghost-btn" onClick={onCancel}>← Retour</button><b className="display">Membres</b><span style={{ width: 60 }} /></div>
+      <div className="wrap">
+        {rows === null ? <div className="center"><div className="spinner" /></div> :
+          rows.length === 0 ? <div className="empty">Aucun membre.</div> :
+            <>
+              <p className="muted" style={{ fontSize: 12.5, margin: '2px 2px 12px' }}>{rows.length} inscrits · 🔒 = compte non sécurisé (perd l'accès s'il se déconnecte)</p>
+              <div className="card" style={{ padding: 0 }}>
+                {rows.map(m => (
+                  <div className="lb-row" key={m.user_id}>
+                    <div className="lb-name">
+                      {m.prenom || '—'} {m.compte_securise ? <span title="Sécurisé">✅</span> : <span title="Non sécurisé">🔒</span>}
+                      <div className="lb-sub">{m.email || 'pas d\'e-mail'} · {m.nb_groupes} groupe{m.nb_groupes > 1 ? 's' : ''}</div>
+                      <div className="lb-sub">Vu : {fmtDate(m.derniere_connexion)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>}
       </div>
     </>
   )
