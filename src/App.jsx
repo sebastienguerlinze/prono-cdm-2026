@@ -247,30 +247,75 @@ function Home({ uid, email, isAdmin, notify, onOpen, onLogout }) {
 /* ================= MEMBRES (admin) ================= */
 function Members({ notify, onCancel }) {
   const [rows, setRows] = useState(null)
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase.rpc('admin_list_members')
-      if (error) { notify('Accès refusé'); setRows([]); return }
-      setRows(data || [])
-    })()
-  }, [])
+  const [openId, setOpenId] = useState(null) // membre en cours de récupération
+  const [mail, setMail] = useState('')
+  const [pwd, setPwd] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(null)      // { prenom, email, password } après succès
+
+  const load = async () => {
+    const { data, error } = await supabase.rpc('admin_list_members')
+    if (error) { notify('Accès refusé'); setRows([]); return }
+    setRows(data || [])
+  }
+  useEffect(() => { load() }, [])
+
   const fmtDate = (iso) => iso ? new Intl.DateTimeFormat('fr-BE', { timeZone: BX, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)) : '—'
+
+  const openRecover = (m) => { setOpenId(m.user_id); setMail(m.email || ''); setPwd(''); setDone(null) }
+
+  const recover = async (m) => {
+    if (!mail.trim() || pwd.length < 6) return notify('E-mail + mot de passe (6 caractères min)')
+    setBusy(true)
+    const { data, error } = await supabase.functions.invoke('admin-recover', {
+      body: { user_id: m.user_id, email: mail.trim().toLowerCase(), password: pwd },
+    })
+    setBusy(false)
+    if (error || data?.error) { notify('Échec : ' + (data?.error || 'erreur')); return }
+    setDone({ prenom: m.prenom, email: mail.trim().toLowerCase(), password: pwd })
+    setOpenId(null)
+    notify('Compte mis à jour ✓')
+    load()
+  }
+
   return (
     <>
       <div className="topbar"><button className="ghost-btn" onClick={onCancel}>← Retour</button><b className="display">Membres</b><span style={{ width: 60 }} /></div>
       <div className="wrap">
+        {done && (
+          <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #12914e' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>✅ Identifiants à transmettre à {done.prenom || 'ce membre'}</div>
+            <div style={{ fontSize: 13 }}>E-mail : <b>{done.email}</b></div>
+            <div style={{ fontSize: 13 }}>Mot de passe : <b>{done.password}</b></div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Il se reconnecte via « Se reconnecter » avec ces identifiants, puis peut changer son mot de passe en sécurisant à nouveau son compte.</div>
+            <button className="btn alt" style={{ marginTop: 10 }} onClick={() => setDone(null)}>OK</button>
+          </div>
+        )}
         {rows === null ? <div className="center"><div className="spinner" /></div> :
           rows.length === 0 ? <div className="empty">Aucun membre.</div> :
             <>
-              <p className="muted" style={{ fontSize: 12.5, margin: '2px 2px 12px' }}>{rows.length} inscrits · 🔒 = compte non sécurisé (perd l'accès s'il se déconnecte)</p>
+              <p className="muted" style={{ fontSize: 12.5, margin: '2px 2px 12px' }}>{rows.length} inscrits · 🔒 = compte non sécurisé · « Récupérer » = définir e-mail + mot de passe temporaire</p>
               <div className="card" style={{ padding: 0 }}>
                 {rows.map(m => (
-                  <div className="lb-row" key={m.user_id}>
-                    <div className="lb-name">
-                      {m.prenom || '—'} {m.compte_securise ? <span title="Sécurisé">✅</span> : <span title="Non sécurisé">🔒</span>}
-                      <div className="lb-sub">{m.email || 'pas d\'e-mail'} · {m.nb_groupes} groupe{m.nb_groupes > 1 ? 's' : ''}</div>
-                      <div className="lb-sub">Vu : {fmtDate(m.derniere_connexion)}</div>
+                  <div key={m.user_id} style={{ borderBottom: '1px solid rgba(125,125,125,.12)', padding: '10px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div>{m.prenom || '—'} {m.compte_securise ? <span title="Sécurisé">✅</span> : <span title="Non sécurisé">🔒</span>}</div>
+                        <div className="lb-sub">{m.email || 'pas d\'e-mail'} · {m.nb_groupes} groupe{m.nb_groupes > 1 ? 's' : ''} · vu {fmtDate(m.derniere_connexion)}</div>
+                      </div>
+                      <button className="ghost-btn" style={{ fontSize: 13 }} onClick={() => openId === m.user_id ? setOpenId(null) : openRecover(m)}>
+                        {openId === m.user_id ? 'Fermer' : 'Récupérer'}
+                      </button>
                     </div>
+                    {openId === m.user_id && (
+                      <div style={{ marginTop: 8 }}>
+                        <div className="field"><label>E-mail du membre</label>
+                          <input className="input" type="email" value={mail} onChange={e => setMail(e.target.value)} placeholder="membre@email.com" /></div>
+                        <div className="field"><label>Mot de passe temporaire (6 caractères min)</label>
+                          <input className="input" value={pwd} onChange={e => setPwd(e.target.value)} placeholder="ex. CDM2026" /></div>
+                        <button className="btn" onClick={() => recover(m)} disabled={busy}>{busy ? '…' : 'Définir les identifiants'}</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
