@@ -255,7 +255,7 @@ function Members({ notify, onCancel }) {
 
   const load = async () => {
     const { data, error } = await supabase.rpc('admin_list_members')
-    if (error) { notify('Accès refusé'); setRows([]); return }
+    if (error) { notify('Err: ' + (error.message || error.code || 'inconnue')); setRows([]); return }
     setRows(data || [])
   }
   useEffect(() => { load() }, [])
@@ -653,15 +653,20 @@ function Fantasy({ group, uid, notify }) {
   const [adding, setAdding] = useState(null)  // position en cours d'ajout
   const [q, setQ] = useState('')
   const squadRef = useRef(null)
+  const [lockedAt, setLockedAt] = useState(null)     // équipe verrouillée ?
+  const [kickoff, setKickoff] = useState(null)        // 1er coup d'envoi de la phase
 
   useEffect(() => {
     (async () => {
       const pl = await fetchAllPlayers('id,name,team_code,position')
       setPlayers(pl || [])
+      const { data: ko } = await supabase.from('fixtures').select('kickoff_utc').eq('phase', FANTASY_PHASE).order('kickoff_utc').limit(1).maybeSingle()
+      setKickoff(ko?.kickoff_utc || null)
       const { data: sq } = await supabase.from('fantasy_squads')
-        .select('id').eq('group_id', group.id).eq('user_id', uid).eq('phase', FANTASY_PHASE).maybeSingle()
+        .select('id,locked_at').eq('group_id', group.id).eq('user_id', uid).eq('phase', FANTASY_PHASE).maybeSingle()
       if (sq) {
         squadRef.current = sq.id
+        setLockedAt(sq.locked_at || null)
         const { data: fp } = await supabase.from('fantasy_picks').select('player_id,is_captain').eq('squad_id', sq.id)
         const byId = {}; (pl || []).forEach(p => byId[p.id] = p)
         setPicks((fp || []).map(x => {
@@ -677,7 +682,12 @@ function Fantasy({ group, uid, notify }) {
   const hasCaptain = picks.some(p => p.is_captain)
   const complete = FORMATION.every(f => countPos(f.key) === f.need) && hasCaptain
 
+  const started = kickoff ? new Date() >= new Date(kickoff) : false
+  // verrouillé si : explicitement verrouillé, OU équipe complète et tournoi commencé
+  const locked = !!lockedAt || (complete && started)
+
   const saveSquad = async (list) => {
+    if (locked) return
     let id = squadRef.current
     if (!id) {
       const { data, error } = await supabase.from('fantasy_squads')
@@ -689,10 +699,20 @@ function Fantasy({ group, uid, notify }) {
     if (list.length) {
       await supabase.from('fantasy_picks').insert(list.map(p => ({ squad_id: id, player_id: p.player_id, is_captain: !!p.is_captain })))
     }
+    // si l'équipe devient complète APRÈS le début du tournoi : on la verrouille à l'instant T
+    const isComplete = FORMATION.every(f => list.filter(x => x.position === f.key).length === f.need) && list.some(x => x.is_captain)
+    if (isComplete && started && !lockedAt) {
+      const now = new Date().toISOString()
+      await supabase.from('fantasy_squads').update({ locked_at: now }).eq('id', id)
+      setLockedAt(now)
+      notify('Équipe complète et verrouillée ✓ Tes points comptent à partir de maintenant')
+      return
+    }
     notify('Équipe enregistrée ✓')
   }
 
   const addPlayer = (p) => {
+    if (locked) return notify('Équipe verrouillée')
     const need = FORMATION.find(f => f.key === p.position)?.need ?? 0
     if (picks.filter(x => x.position === p.position).length >= need) return notify('Ce secteur est complet')
     if (picks.some(x => x.player_id === p.id)) return notify('Déjà dans ton équipe')
@@ -700,8 +720,8 @@ function Fantasy({ group, uid, notify }) {
     setPicks(next); setQ(''); saveSquad(next)
     if (next.filter(x => x.position === p.position).length >= need) setAdding(null)
   }
-  const removePlayer = (player_id) => { const next = picks.filter(p => p.player_id !== player_id); setPicks(next); saveSquad(next) }
-  const setCaptain = (player_id) => { const next = picks.map(p => ({ ...p, is_captain: p.player_id === player_id })); setPicks(next); saveSquad(next) }
+  const removePlayer = (player_id) => { if (locked) return notify('Équipe verrouillée'); const next = picks.filter(p => p.player_id !== player_id); setPicks(next); saveSquad(next) }
+  const setCaptain = (player_id) => { if (locked) return notify('Équipe verrouillée'); const next = picks.map(p => ({ ...p, is_captain: p.player_id === player_id })); setPicks(next); saveSquad(next) }
 
   if (players === null) return <div className="center"><div className="spinner" /></div>
 
@@ -715,6 +735,16 @@ function Fantasy({ group, uid, notify }) {
   return (
     <>
       <h2 style={{ fontSize: 24, margin: '4px 2px 10px' }}>Mon équipe Fantasy</h2>
+      {locked && (
+        <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #12914e' }}>
+          <span style={{ fontSize: 13 }}>🔒 <b>Équipe verrouillée</b> — le tournoi a commencé, plus de changement possible.</span>
+        </div>
+      )}
+      {!locked && started && !complete && (
+        <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #e0a200' }}>
+          <span style={{ fontSize: 13 }}>⚠️ <b>Le tournoi a commencé.</b> Tu peux encore composer ton équipe, mais tu ne marqueras <b>pas</b> les points des matchs déjà joués. Elle se <b>verrouille dès qu'elle est complète</b>.</span>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div><b>{total}/11</b> joueurs</div>
         <span className={complete ? 'tag done' : 'tag'}>{complete ? 'Équipe complète ✅' : (total === 11 && !hasCaptain ? 'Choisis un capitaine ⭐' : 'À compléter')}</span>
@@ -732,10 +762,10 @@ function Fantasy({ group, uid, notify }) {
               <div key={p.player_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
                 <button className="ghost-btn" title="Désigner capitaine" onClick={() => setCaptain(p.player_id)} style={{ fontSize: 18, padding: 0 }}>{p.is_captain ? '⭐' : '☆'}</button>
                 <div style={{ flex: 1 }}>{p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}</span></div>
-                <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>
+                {!locked && <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>}
               </div>
             ))}
-            {!full && adding !== sec.key &&
+            {!locked && !full && adding !== sec.key &&
               <button className="btn alt" style={{ marginTop: 6 }} onClick={() => { setAdding(sec.key); setQ('') }}>＋ Ajouter un {sec.single}</button>}
             {adding === sec.key && (
               <div style={{ marginTop: 8 }}>
