@@ -752,7 +752,7 @@ function Highlights({ group }) {
   )
 }
 
-const LINE_COLORS = ['#e23b3b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#0d9488', '#9333ea', '#ca8a04', '#475569', '#e11d48', '#0ea5e9', '#84cc16']
+const LINE_COLORS = ['#e23b3b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#0d9488', '#9333ea', '#ca8a04', '#94a3b8', '#e11d48', '#0ea5e9', '#84cc16']
 
 function RankEvolution({ group, uid }) {
   const [open, setOpen] = useState(false)
@@ -815,7 +815,7 @@ function Bump({ data, uid }) {
       ))}
       {series.map((s, si) => {
         const isMe = s.id === uid
-        const color = isMe ? '#0C0D10' : LINE_COLORS[si % LINE_COLORS.length]
+        const color = isMe ? '#F2F4F7' : LINE_COLORS[si % LINE_COLORS.length]
         const last = s.ranks[s.ranks.length - 1]
         return (
           <g key={s.id} opacity={isMe ? 1 : 0.9}>
