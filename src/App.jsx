@@ -13,6 +13,12 @@ const randCode = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ
 const TEAM_FIX = { 'DR Congo': 'Congo DR', 'Cape Verde': 'Cape Verde Islands', 'Turkey': 'Türkiye' }
 const teamCode = (name) => (name ? (TEAM_FIX[name] || name) : name)
 const resize = (arr, n) => { const out = (arr || []).slice(0, n); while (out.length < n) out.push(''); return out }
+const fmtCountdown = (ms) => {
+  const m = Math.floor(ms / 60000)
+  if (m >= 1440) { const j = Math.floor(m / 1440); const h = Math.floor((m % 1440) / 60); return `${j}j${h ? ' ' + h + 'h' : ''}` }
+  if (m >= 60) { const h = Math.floor(m / 60); return `${h}h ${m % 60}min` }
+  return `${Math.max(0, m)} min`
+}
 
 // charge TOUS les joueurs par paquets de 1000 (contourne la limite de 1000 lignes de Supabase)
 async function fetchAllPlayers(cols) {
@@ -446,6 +452,8 @@ function Matchs({ group, uid, notify }) {
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
+  const [, setTick] = useState(0)              // rafraichit les comptes à rebours
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
 
   useEffect(() => {
     (async () => {
@@ -616,6 +624,8 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
   const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
   const showScorers = group.scorers_enabled && !finished && (p1 > 0 || p2 > 0)
+  const msLeft = new Date(fx.kickoff_utc).getTime() - Date.now()
+  const soon = msLeft > 0 && msLeft <= 2 * 3600 * 1000
 
   return (
     <div className="card fx">
@@ -648,8 +658,11 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
           ? <><span className="realscore">Résultat : {fx.score1}–{fx.score2}</span><span className="pts">+{pts} pts</span></>
           : live
             ? <><span className="realscore">🔴 En direct : {fx.score1}–{fx.score2}</span><span className="muted" style={{ fontSize: 12 }}>points provisoires ↓</span></>
-            : <><span className="muted" style={{ fontSize: 12 }}>{locked && !pred ? 'Pas de prono → 0–0 par défaut' : 'Ton prono'}</span>
-              <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>}
+            : locked
+              ? <><span className="muted" style={{ fontSize: 12 }}>{!pred ? 'Pas de prono → 0–0 par défaut' : 'Ton prono'}</span>
+                <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>
+              : <><span className={soon ? '' : 'muted'} style={{ fontSize: 12, ...(soon ? { color: '#e23b3b', fontWeight: 700 } : {}) }}>⏳ Ferme dans {fmtCountdown(msLeft)}</span>
+                <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>}
       </div>
 
       {locked && (
