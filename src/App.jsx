@@ -49,6 +49,44 @@ export default function App() {
     <div className="app">
       {!session ? <Auth notify={notify} /> : <Shell session={session} isAdmin={isAdmin} notify={notify} />}
       {toast && <div className="toast">{toast}</div>}
+      <UpdateBanner />
+    </div>
+  )
+}
+
+/* ================= BANDEAU NOUVELLE VERSION ================= */
+function UpdateBanner() {
+  const [stale, setStale] = useState(false)
+  useEffect(() => {
+    const norm = (s) => { try { return new URL(s, location.href).pathname } catch { return s } }
+    const current = [...document.querySelectorAll('script[type="module"][src]')].map(s => norm(s.getAttribute('src'))).sort().join('|')
+    if (!current) return
+    let active = true
+    const check = async () => {
+      try {
+        const res = await fetch('/?_v=' + Date.now(), { cache: 'no-store' })
+        if (!res.ok) return
+        const html = await res.text()
+        const found = [...html.matchAll(/<script[^>]*type="module"[^>]*src="([^"]+)"/g)].map(m => norm(m[1])).sort().join('|')
+        if (active && found && found !== current) setStale(true)
+      } catch { /* hors ligne ou erreur : on ignore */ }
+    }
+    const onWake = () => { if (!document.hidden && !stale) check() }
+    const id = setInterval(onWake, 90000)
+    document.addEventListener('visibilitychange', onWake)
+    window.addEventListener('focus', onWake)
+    return () => { active = false; clearInterval(id); document.removeEventListener('visibilitychange', onWake); window.removeEventListener('focus', onWake) }
+  }, [stale])
+  if (!stale) return null
+  return (
+    <div onClick={() => location.reload()} style={{
+      position: 'fixed', left: 12, right: 12, bottom: 12, zIndex: 9999,
+      background: '#0C0D10', color: '#fff', borderRadius: 12, padding: '12px 16px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+      boxShadow: '0 6px 24px rgba(0,0,0,0.35)', cursor: 'pointer', fontSize: 14
+    }}>
+      <span>🔄 Nouvelle version disponible</span>
+      <button style={{ background: '#fff', color: '#0C0D10', border: 'none', borderRadius: 8, padding: '6px 14px', fontWeight: 600, cursor: 'pointer' }}>Recharger</button>
     </div>
   )
 }
