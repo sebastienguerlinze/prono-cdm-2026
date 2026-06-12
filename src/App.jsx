@@ -738,6 +738,7 @@ function Fantasy({ group, uid, notify }) {
   const squadRef = useRef(null)
   const [lockedAt, setLockedAt] = useState(null)     // équipe verrouillée ?
   const [kickoff, setKickoff] = useState(null)        // 1er coup d'envoi de la phase
+  const [view, setView] = useState('team')            // 'team' | 'ranking'
 
   useEffect(() => {
     (async () => {
@@ -817,6 +818,12 @@ function Fantasy({ group, uid, notify }) {
 
   return (
     <>
+      <div className="seg" style={{ marginBottom: 14 }}>
+        <button className={view === 'team' ? 'on' : ''} onClick={() => setView('team')}>Mon équipe</button>
+        <button className={view === 'ranking' ? 'on' : ''} onClick={() => setView('ranking')}>Classement</button>
+      </div>
+      {view === 'ranking' && <FantasyRanking group={group} uid={uid} />}
+      {view === 'team' && <>
       <h2 style={{ fontSize: 24, margin: '4px 2px 10px' }}>Mon équipe Fantasy</h2>
       {locked && (
         <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #12914e' }}>
@@ -871,6 +878,71 @@ function Fantasy({ group, uid, notify }) {
       <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 4 }}>
         Ton équipe se sauvegarde toute seule. Le ⭐ désigne ton capitaine (points ×2).
       </p>
+      </>}
+    </>
+  )
+}
+
+function FantasyRanking({ group, uid }) {
+  const [rows, setRows] = useState(null)
+  const [openUser, setOpenUser] = useState(null)
+  const [teams, setTeams] = useState({})
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('fantasy_ranking_public').select('*').eq('group_id', group.id)
+      const sorted = (data || []).slice().sort((a, b) => (b.fantasy_points - a.fantasy_points) || (a.display_name || '').localeCompare(b.display_name || ''))
+      setRows(sorted)
+    })()
+  }, [group.id])
+
+  async function toggle(userId, phaseStarted) {
+    if (openUser === userId) { setOpenUser(null); return }
+    setOpenUser(userId)
+    if (phaseStarted && !teams[userId]) {
+      const { data } = await supabase.from('fantasy_team_public').select('player_name,team_code,position,is_captain').eq('group_id', group.id).eq('user_id', userId)
+      const order = { Goalkeeper: 0, Defender: 1, Midfielder: 2, Attacker: 3 }
+      const sorted = (data || []).slice().sort((a, b) => (order[a.position] - order[b.position]) || (a.player_name || '').localeCompare(b.player_name || ''))
+      setTeams(t => ({ ...t, [userId]: sorted }))
+    }
+  }
+
+  if (rows === null) return <div className="center"><div className="spinner" /></div>
+  const anyPts = rows.some(r => r.fantasy_points > 0)
+  return (
+    <>
+      <p className="muted" style={{ fontSize: 12, margin: '0 2px 12px' }}>Touche un participant pour voir son équipe.</p>
+      {!anyPts &&
+        <div className="card" style={{ marginBottom: 12 }}>
+          <span className="muted" style={{ fontSize: 13 }}>🌟 Le classement se remplira dès que les équipes de tes joueurs entreront en lice.</span>
+        </div>}
+      <div className="card" style={{ padding: 0 }}>
+        {rows.map((r, i) => (
+          <div key={r.user_id}>
+            <div className="lb-row" onClick={() => toggle(r.user_id, r.phase_started)} style={{ cursor: 'pointer' }}>
+              <div className={'rank r' + (i + 1)}>{i + 1}</div>
+              <div className="lb-name">{r.display_name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.nb_joueurs}/11 joueurs</div></div>
+              <div className="lb-pts">{r.fantasy_points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
+              <div className="lb-sub" style={{ marginLeft: 8 }}>{openUser === r.user_id ? '▴' : '▾'}</div>
+            </div>
+            {openUser === r.user_id && (
+              <div style={{ padding: '2px 14px 12px', background: 'rgba(0,0,0,0.03)' }}>
+                {!r.phase_started
+                  ? <div className="muted lb-sub" style={{ padding: 8 }}>🔒 Équipe visible une fois la phase commencée.</div>
+                  : !teams[r.user_id]
+                    ? <div className="muted lb-sub" style={{ padding: 8 }}>Chargement…</div>
+                    : teams[r.user_id].length === 0
+                      ? <div className="muted lb-sub" style={{ padding: 8 }}>Équipe vide.</div>
+                      : teams[r.user_id].map((p, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                            <span style={{ fontSize: 13 }}>{p.is_captain ? '⭐ ' : ''}{p.player_name}<span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{POS_FR[p.position] || p.position} · {p.team_code}</span></span>
+                          </div>
+                        ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {!rows.length && <div className="empty" style={{ padding: 20 }}>Aucune équipe pour l'instant.</div>}
+      </div>
     </>
   )
 }
