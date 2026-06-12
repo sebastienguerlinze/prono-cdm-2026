@@ -739,6 +739,87 @@ function Highlights({ group }) {
   )
 }
 
+const LINE_COLORS = ['#e23b3b', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#dc2626', '#0d9488', '#9333ea', '#ca8a04', '#475569', '#e11d48', '#0ea5e9', '#84cc16']
+
+function RankEvolution({ group, uid }) {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    if (!open || data) return
+    (async () => {
+      const { data: pd } = await supabase.from('points_detail')
+        .select('user_id,display_name,status,kickoff_utc,base_pts,scorer_pts')
+        .eq('group_id', group.id)
+      const all = pd || []
+      const fin = all.filter(r => r.status === 'finished')
+      const dayKeyOf = (iso) => new Date(iso).toISOString().slice(0, 10)
+      const days = [...new Set(fin.map(r => dayKeyOf(r.kickoff_utc)))].sort()
+      const names = {}; all.forEach(r => { names[r.user_id] = r.display_name })
+      const ids = Object.keys(names)
+      const series = ids.map(u => ({ id: u, name: names[u], ranks: [] }))
+      days.forEach(day => {
+        const cum = {}; ids.forEach(u => cum[u] = 0)
+        fin.forEach(r => { if (dayKeyOf(r.kickoff_utc) <= day) cum[r.user_id] += (r.base_pts || 0) + (r.scorer_pts || 0) })
+        const order = ids.slice().sort((a, b) => (cum[b] - cum[a]) || names[a].localeCompare(names[b]))
+        const pos = {}; order.forEach((u, i) => pos[u] = i + 1)
+        series.forEach(s => s.ranks.push(pos[s.id]))
+      })
+      // tri final pour un rendu stable
+      series.sort((a, b) => (a.ranks[a.ranks.length - 1] || 99) - (b.ranks[b.ranks.length - 1] || 99))
+      setData({ days, series, n: ids.length })
+    })()
+  }, [open, data, group.id])
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button onClick={() => setOpen(o => !o)} className="card"
+        style={{ width: '100%', textAlign: 'left', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'inherit' }}>
+        📈 {open ? 'Masquer' : 'Voir'} l'évolution du classement
+      </button>
+      {open && (
+        !data ? <div className="muted" style={{ fontSize: 12, padding: 8 }}>Chargement…</div>
+          : data.days.length === 0 ? <div className="muted" style={{ fontSize: 12, padding: 8 }}>Disponible après les premiers matchs joués.</div>
+            : <Bump data={data} uid={uid} />
+      )}
+    </div>
+  )
+}
+
+function Bump({ data, uid }) {
+  const { days, series, n } = data
+  const W = 340, rowH = 22, padTop = 16, padBottom = 24, padLeft = 20, padRight = 96
+  const H = padTop + padBottom + n * rowH
+  const colX = (i) => days.length === 1 ? (W - padRight + padLeft) / 2 : padLeft + i * (W - padLeft - padRight) / (days.length - 1)
+  const rowY = (rank) => padTop + (rank - 1) * rowH + rowH / 2
+  const fmtDay = (d) => { const p = d.split('-'); return p[2] + '/' + p[1] }
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', marginTop: 8 }}>
+      {Array.from({ length: n }, (_, i) => (
+        <text key={'y' + i} x={2} y={rowY(i + 1) + 3} fontSize="9" fill="#aaa">{i + 1}</text>
+      ))}
+      {days.map((d, i) => (
+        <text key={'x' + d} x={colX(i)} y={H - 7} fontSize="9" fill="#aaa" textAnchor="middle">{fmtDay(d)}</text>
+      ))}
+      {series.map((s, si) => {
+        const isMe = s.id === uid
+        const color = isMe ? '#0C0D10' : LINE_COLORS[si % LINE_COLORS.length]
+        const last = s.ranks[s.ranks.length - 1]
+        return (
+          <g key={s.id} opacity={isMe ? 1 : 0.9}>
+            {days.length > 1 &&
+              <polyline points={s.ranks.map((r, i) => `${colX(i)},${rowY(r)}`).join(' ')}
+                fill="none" stroke={color} strokeWidth={isMe ? 2.6 : 1.4} strokeLinejoin="round" strokeLinecap="round" />}
+            {s.ranks.map((r, i) => <circle key={i} cx={colX(i)} cy={rowY(r)} r={isMe ? 3.4 : 2.4} fill={color} />)}
+            <text x={colX(days.length - 1) + 6} y={rowY(last) + 3} fontSize="9.5" fill={color} fontWeight={isMe ? 700 : 500}>
+              {s.name}{isMe ? ' (toi)' : ''}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 function Classement({ group, uid }) {
   const [rows, setRows] = useState(null)
   const [openUser, setOpenUser] = useState(null)
@@ -811,6 +892,7 @@ function Classement({ group, uid }) {
           </div>
         ))}
       </div>
+      <RankEvolution group={group} uid={uid} />
     </>
   )
 }
