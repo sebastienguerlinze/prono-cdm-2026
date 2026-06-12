@@ -468,7 +468,7 @@ function Matchs({ group, uid, notify }) {
         <div key={d}>
           <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
           {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} />
+            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} uid={uid} />
           ))}
         </div>
       ))}
@@ -493,7 +493,7 @@ function ScorerGroup({ team, list, values, disabled, onPick }) {
   )
 }
 
-function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave }) {
+function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
   const [p1, setP1] = useState(pred?.pred1 ?? 0)
@@ -501,6 +501,21 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave }) {
   const [sc1, setSc1] = useState([])
   const [sc2, setSc2] = useState([])
   const prefilled = useRef(false)
+  const [others, setOthers] = useState(null)
+  const [showOthers, setShowOthers] = useState(false)
+
+  async function loadOthers() {
+    if (showOthers) { setShowOthers(false); return }
+    setShowOthers(true)
+    if (others === null) {
+      const { data } = await supabase.from('points_detail')
+        .select('display_name,user_id,pred1,pred2,has_prono,base_pts,scorer_pts,buteurs_pronos')
+        .eq('group_id', group.id).eq('fixture_id', fx.id)
+      const sorted = (data || []).slice().sort((a, b) =>
+        (b.has_prono - a.has_prono) || (((b.base_pts || 0) + (b.scorer_pts || 0)) - ((a.base_pts || 0) + (a.scorer_pts || 0))))
+      setOthers(sorted)
+    }
+  }
 
   useEffect(() => { setP1(pred?.pred1 ?? 0); setP2(pred?.pred2 ?? 0) }, [pred])
 
@@ -558,6 +573,35 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave }) {
           : <><span className="muted" style={{ fontSize: 12 }}>{locked && !pred ? 'Pas de prono → 0–0 par défaut' : 'Ton prono'}</span>
             <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>}
       </div>
+
+      {locked && (
+        <div style={{ marginTop: 8, borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 8 }}>
+          <button onClick={loadOthers}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'inherit', textDecoration: 'underline' }}>
+            {showOthers ? '▴ Masquer les pronos des autres' : '👀 Voir les pronos des autres'}
+          </button>
+          {showOthers && (
+            others === null
+              ? <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Chargement…</div>
+              : others.length === 0
+                ? <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Aucun autre membre pour l'instant.</div>
+                : <div style={{ marginTop: 8 }}>
+                    {others.map(o => (
+                      <div key={o.user_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <span style={{ fontSize: 13 }}>{o.display_name}{o.user_id === uid ? ' (toi)' : ''}</span>
+                          {o.scorer_pts > 0 && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>⚽×{o.scorer_pts}</span>}
+                        </div>
+                        <div style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
+                          {o.has_prono ? `${o.pred1}–${o.pred2}` : <span className="muted">pas de prono</span>}
+                          {finished && o.has_prono ? <span className="muted" style={{ marginLeft: 8 }}>+{(o.base_pts || 0) + (o.scorer_pts || 0)}</span> : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
