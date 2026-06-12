@@ -459,8 +459,21 @@ function Matchs({ group, uid, notify }) {
   if (fixtures === null) return <div className="center"><div className="spinner" /></div>
   const list = fixtures.filter(f => f.phase === phase)
   const days = [...new Set(list.map(f => dayKey(f.kickoff_utc)))]
+  const nowMs = Date.now()
+  const win48 = nowMs + 48 * 3600 * 1000
+  const soonAll = fixtures.filter(f => { const k = new Date(f.kickoff_utc).getTime(); return k > nowMs && k <= win48 && f.status !== 'finished' })
+  const soonTodo = soonAll.filter(f => !preds[f.id])
   return (
     <>
+      {soonAll.length > 0 && (
+        soonTodo.length > 0
+          ? <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #e0a200' }}>
+              <span style={{ fontSize: 13 }}>⏰ <b>Il te reste {soonTodo.length} match{soonTodo.length > 1 ? 's' : ''} à pronostiquer</b> dans les prochaines 48h — n'oublie pas avant le coup d'envoi !</span>
+            </div>
+          : <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #12914e' }}>
+              <span style={{ fontSize: 13 }}>✅ Tes pronos des prochaines 48h sont à jour. Bien joué !</span>
+            </div>
+      )}
       <div className="seg" style={{ marginBottom: 14, overflowX: 'auto' }}>
         {Object.keys(PHASES).map(p => <button key={p} className={phase === p ? 'on' : ''} onClick={() => setPhase(p)} style={{ whiteSpace: 'nowrap' }}>{PHASES[p]}</button>)}
       </div>
