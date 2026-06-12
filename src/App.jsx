@@ -456,6 +456,17 @@ function Matchs({ group, uid, notify }) {
     notify('Prono enregistré ✓')
   }
 
+  // sauvegarde du SCORE uniquement — ne touche jamais aux buteurs deja enregistres
+  const saveScore = async (fx, pred1, pred2) => {
+    setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), pred1, pred2 } }))
+    const { data, error } = await supabase.from('predictions').upsert(
+      { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
+      { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
+    if (error || !data) { notify('Sauvegarde impossible'); return }
+    setPreds(s => ({ ...s, [fx.id]: { id: data.id, pred1, pred2 } }))
+    notify('Prono enregistré ✓')
+  }
+
   if (fixtures === null) return <div className="center"><div className="spinner" /></div>
   const list = fixtures.filter(f => f.phase === phase)
   const days = [...new Set(list.map(f => dayKey(f.kickoff_utc)))]
@@ -481,7 +492,7 @@ function Matchs({ group, uid, notify }) {
         <div key={d}>
           <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
           {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} uid={uid} />
+            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} onSaveScore={saveScore} uid={uid} />
           ))}
         </div>
       ))}
@@ -506,7 +517,7 @@ function ScorerGroup({ team, list, values, disabled, onPick }) {
   )
 }
 
-function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
+function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveScore, uid }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
   const [p1, setP1] = useState(pred?.pred1 ?? 0)
@@ -549,6 +560,11 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
   useEffect(() => { setSc1(a => resize(a, p1)) }, [p1])
   useEffect(() => { setSc2(a => resize(a, p2)) }, [p2])
 
+  // refs toujours a jour (evite de perdre les buteurs a cause d'un etat perime)
+  const sc1Ref = useRef(sc1); const sc2Ref = useRef(sc2)
+  useEffect(() => { sc1Ref.current = sc1 }, [sc1])
+  useEffect(() => { sc2Ref.current = sc2 }, [sc2])
+
   const commit = (np1, np2, ns1, ns2) => onSave(fx, np1, np2, [...ns1, ...ns2])
 
   const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
@@ -564,9 +580,9 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
         <div className="team r">{fx.team1}</div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input className="score-in" inputMode="numeric" disabled={locked} value={p1}
-            onChange={e => setP1(clamp(e.target.value))} onBlur={() => !locked && commit(p1, p2, sc1, sc2)} />
+            onChange={e => setP1(clamp(e.target.value))} onBlur={() => !locked && onSaveScore(fx, p1, p2)} />
           <input className="score-in" inputMode="numeric" disabled={locked} value={p2}
-            onChange={e => setP2(clamp(e.target.value))} onBlur={() => !locked && commit(p1, p2, sc1, sc2)} />
+            onChange={e => setP2(clamp(e.target.value))} onBlur={() => !locked && onSaveScore(fx, p1, p2)} />
         </div>
         <div className="team">{fx.team2}</div>
       </div>
@@ -574,9 +590,9 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
       {showScorers && (
         <div style={{ marginTop: 10 }}>
           {p1 > 0 && <ScorerGroup team={fx.team1} list={byTeam[teamCode(fx.team1)]} values={sc1} disabled={locked}
-            onPick={(i, v) => setSc1(arr => { const c = [...arr]; c[i] = v; commit(p1, p2, c, sc2); return c })} />}
+            onPick={(i, v) => setSc1(arr => { const c = [...arr]; c[i] = v; sc1Ref.current = c; commit(p1, p2, c, sc2Ref.current); return c })} />}
           {p2 > 0 && <ScorerGroup team={fx.team2} list={byTeam[teamCode(fx.team2)]} values={sc2} disabled={locked}
-            onPick={(i, v) => setSc2(arr => { const c = [...arr]; c[i] = v; commit(p1, p2, sc1, c); return c })} />}
+            onPick={(i, v) => setSc2(arr => { const c = [...arr]; c[i] = v; sc2Ref.current = c; commit(p1, p2, sc1Ref.current, c); return c })} />}
         </div>
       )}
 
