@@ -591,6 +591,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, uid }) {
                         <div style={{ minWidth: 0 }}>
                           <span style={{ fontSize: 13 }}>{o.display_name}{o.user_id === uid ? ' (toi)' : ''}</span>
                           {o.scorer_pts > 0 && <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>⚽×{o.scorer_pts}</span>}
+                          {o.buteurs_pronos && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>⚽ {o.buteurs_pronos}</div>}
                         </div>
                         <div style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
                           {o.has_prono ? `${o.pred1}–${o.pred2}` : <span className="muted">pas de prono</span>}
@@ -676,6 +677,7 @@ function Classement({ group, uid }) {
                             <div style={{ minWidth: 0 }}>
                               <div style={{ fontSize: 13 }}>{d.team1} {fini ? `${d.score1}-${d.score2}` : 'vs'} {d.team2}</div>
                               <div className="lb-sub">{d.has_prono ? `Prono ${d.pred1}-${d.pred2}` : 'Pas de prono'}{d.scorer_pts > 0 ? ` · ${d.scorer_pts} buteur${d.scorer_pts > 1 ? 's' : ''} ✓` : ''}</div>
+                              {d.buteurs_pronos && <div className="lb-sub" style={{ marginTop: 1 }}>⚽ {d.buteurs_pronos}</div>}
                             </div>
                             <div className="lb-pts" style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{fini ? `+${total}` : '—'}<span className="lb-sub" style={{ marginLeft: 3 }}>{fini ? 'pts' : 'à venir'}</span></div>
                           </div>
