@@ -574,6 +574,8 @@ function scoreOf(p1, p2, r1, r2, g) {
 /* ================= CLASSEMENT ================= */
 function Classement({ group, uid }) {
   const [rows, setRows] = useState(null)
+  const [openUser, setOpenUser] = useState(null)
+  const [details, setDetails] = useState({})
   useEffect(() => {
     (async () => {
       const { data: members } = await supabase.from('group_members').select('user_id, profiles(display_name)').eq('group_id', group.id)
@@ -592,16 +594,51 @@ function Classement({ group, uid }) {
       setRows(merged)
     })()
   }, [group.id])
+
+  async function toggle(userId) {
+    if (openUser === userId) { setOpenUser(null); return }
+    setOpenUser(userId)
+    if (!details[userId]) {
+      const { data } = await supabase.from('points_detail').select('*').eq('group_id', group.id).eq('user_id', userId).order('kickoff_utc', { ascending: true })
+      setDetails(d => ({ ...d, [userId]: data || [] }))
+    }
+  }
+
   if (rows === null) return <div className="center"><div className="spinner" /></div>
   return (
     <>
-      <h2 style={{ fontSize: 24, margin: '4px 2px 14px' }}>Classement</h2>
+      <h2 style={{ fontSize: 24, margin: '4px 2px 6px' }}>Classement</h2>
+      <p className="muted" style={{ fontSize: 12, margin: '0 2px 14px' }}>Touche un joueur pour voir le détail de ses points.</p>
       <div className="card" style={{ padding: 0 }}>
         {rows.map((r, i) => (
-          <div className="lb-row" key={r.user_id}>
-            <div className={'rank r' + (i + 1)}>{i + 1}</div>
-            <div className="lb-name">{r.name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.good} bons résultats{r.bonus > 0 ? ` · +${r.bonus} bonus fantasy 🌟` : ''}</div></div>
-            <div className="lb-pts">{r.points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
+          <div key={r.user_id}>
+            <div className="lb-row" onClick={() => toggle(r.user_id)} style={{ cursor: 'pointer' }}>
+              <div className={'rank r' + (i + 1)}>{i + 1}</div>
+              <div className="lb-name">{r.name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.good} bons résultats{r.bonus > 0 ? ` · +${r.bonus} bonus fantasy 🌟` : ''}</div></div>
+              <div className="lb-pts">{r.points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
+              <div className="lb-sub" style={{ marginLeft: 8 }}>{openUser === r.user_id ? '▴' : '▾'}</div>
+            </div>
+            {openUser === r.user_id && (
+              <div style={{ padding: '2px 14px 12px', background: 'rgba(0,0,0,0.03)' }}>
+                {!details[r.user_id]
+                  ? <div className="muted lb-sub" style={{ padding: 8 }}>Chargement…</div>
+                  : details[r.user_id].length === 0
+                    ? <div className="muted lb-sub" style={{ padding: 8 }}>Aucun match commencé pour l'instant.</div>
+                    : details[r.user_id].map(d => {
+                        const fini = d.status === 'finished'
+                        const total = (d.base_pts || 0) + (d.scorer_pts || 0)
+                        return (
+                          <div key={d.fixture_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 13 }}>{d.team1} {fini ? `${d.score1}-${d.score2}` : 'vs'} {d.team2}</div>
+                              <div className="lb-sub">{d.has_prono ? `Prono ${d.pred1}-${d.pred2}` : 'Pas de prono'}{d.scorer_pts > 0 ? ` · ${d.scorer_pts} buteur${d.scorer_pts > 1 ? 's' : ''} ✓` : ''}</div>
+                            </div>
+                            <div className="lb-pts" style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{fini ? `+${total}` : '—'}<span className="lb-sub" style={{ marginLeft: 3 }}>{fini ? 'pts' : 'à venir'}</span></div>
+                          </div>
+                        )
+                      })}
+              </div>
+            )}
           </div>
         ))}
       </div>
