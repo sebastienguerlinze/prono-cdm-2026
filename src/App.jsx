@@ -454,6 +454,14 @@ function Matchs({ group, uid, notify }) {
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
   const [, setTick] = useState(0)              // rafraichit les comptes à rebours
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
+  // re-synchronise la liste des matchs (scores/statuts en direct) sans tout recharger
+  useEffect(() => {
+    const id = setInterval(async () => {
+      const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
+      if (fx) setFixtures(fx)
+    }, 45000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => {
     (async () => {
