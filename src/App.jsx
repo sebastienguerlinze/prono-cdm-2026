@@ -684,6 +684,50 @@ function scoreOf(p1, p2, r1, r2, g) {
 }
 
 /* ================= CLASSEMENT ================= */
+function Highlights({ group }) {
+  const [data, setData] = useState(null)
+  useEffect(() => {
+    (async () => {
+      const since = Date.now() - 7 * 24 * 3600 * 1000
+      const [pdRes, gsRes] = await Promise.all([
+        supabase.from('points_detail').select('user_id,display_name,status,kickoff_utc,base_pts,scorer_pts').eq('group_id', group.id),
+        supabase.from('general_standings').select('user_id,good_results,played_matches').eq('group_id', group.id),
+      ])
+      const pd = pdRes.data || [], gs = gsRes.data || []
+      const byUser = {}
+      pd.forEach(r => {
+        const u = (byUser[r.user_id] = byUser[r.user_id] || { name: r.display_name, week: 0, scorers: 0, good: 0, played: 0 })
+        u.name = r.display_name
+        if (r.status === 'finished') {
+          u.scorers += (r.scorer_pts || 0)
+          if (new Date(r.kickoff_utc).getTime() >= since) u.week += (r.base_pts || 0) + (r.scorer_pts || 0)
+        }
+      })
+      gs.forEach(r => { if (byUser[r.user_id]) { byUser[r.user_id].good = r.good_results || 0; byUser[r.user_id].played = r.played_matches || 0 } })
+      const arr = Object.values(byUser)
+      const best = (val, ok) => arr.filter(ok).sort((a, b) => val(b) - val(a))[0]
+      const week = best(u => u.week, u => u.week > 0)
+      const scorers = best(u => u.scorers, u => u.scorers > 0)
+      const pct = arr.filter(u => u.played > 0).map(u => ({ ...u, p: u.good / u.played }))
+        .sort((a, b) => (b.p - a.p) || (b.played - a.played))[0]
+      setData({ week, scorers, pct })
+    })()
+  }, [group.id])
+  if (!data) return null
+  const { week, scorers, pct } = data
+  if (!week && !scorers && !pct) return null
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>🏅 Faits marquants</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7, fontSize: 13 }}>
+        {week && <div>🔥 Top de la semaine : <b>{week.name}</b> <span className="muted">({week.week} pts)</span></div>}
+        {scorers && <div>🎯 Plus de buteurs trouvés : <b>{scorers.name}</b> <span className="muted">({scorers.scorers})</span></div>}
+        {pct && <div>📈 Meilleur taux de bons résultats : <b>{pct.name}</b> <span className="muted">({Math.round(pct.p * 100)}% · {pct.good}/{pct.played})</span></div>}
+      </div>
+    </div>
+  )
+}
+
 function Classement({ group, uid }) {
   const [rows, setRows] = useState(null)
   const [openUser, setOpenUser] = useState(null)
@@ -721,6 +765,7 @@ function Classement({ group, uid }) {
     <>
       <h2 style={{ fontSize: 24, margin: '4px 2px 6px' }}>Classement</h2>
       <p className="muted" style={{ fontSize: 12, margin: '0 2px 14px' }}>Touche un joueur pour voir le détail de ses points.</p>
+      <Highlights group={group} />
       <div className="card" style={{ padding: 0 }}>
         {rows.map((r, i) => (
           <div key={r.user_id}>
