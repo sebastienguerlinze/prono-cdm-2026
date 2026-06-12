@@ -452,16 +452,19 @@ function Matchs({ group, uid, notify }) {
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
+  const [myPoints, setMyPoints] = useState({}) // fixture_id -> total (base + buteurs), meme source que le classement
   const [, setTick] = useState(0)              // rafraichit les comptes à rebours
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
-  // re-synchronise la liste des matchs (scores/statuts en direct) sans tout recharger
+  // re-synchronise la liste des matchs (scores/statuts en direct) + points sans tout recharger
   useEffect(() => {
     const id = setInterval(async () => {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       if (fx) setFixtures(fx)
+      const { data: pdme } = await supabase.from('points_detail').select('fixture_id,base_pts,scorer_pts').eq('group_id', group.id).eq('user_id', uid)
+      if (pdme) { const mp = {}; pdme.forEach(r => mp[r.fixture_id] = (r.base_pts || 0) + (r.scorer_pts || 0)); setMyPoints(mp) }
     }, 45000)
     return () => clearInterval(id)
-  }, [])
+  }, [group.id, uid])
 
   useEffect(() => {
     (async () => {
@@ -478,6 +481,10 @@ function Matchs({ group, uid, notify }) {
       const { data: pr } = await supabase.from('predictions').select('id,fixture_id,pred1,pred2').eq('group_id', group.id).eq('user_id', uid)
       const pm = {}; (pr || []).forEach(p => pm[p.fixture_id] = { id: p.id, pred1: p.pred1, pred2: p.pred2 })
       setPreds(pm)
+
+      // points reels par match (base + buteurs) = meme source que le classement
+      const { data: pdme } = await supabase.from('points_detail').select('fixture_id,base_pts,scorer_pts').eq('group_id', group.id).eq('user_id', uid)
+      const mp = {}; (pdme || []).forEach(r => mp[r.fixture_id] = (r.base_pts || 0) + (r.scorer_pts || 0)); setMyPoints(mp)
 
       // buteurs déjà choisis
       const ids = (pr || []).map(p => p.id)
@@ -546,7 +553,7 @@ function Matchs({ group, uid, notify }) {
         <div key={d}>
           <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
           {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} onSaveScore={saveScore} uid={uid} />
+            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} onSaveScore={saveScore} uid={uid} myPts={myPoints[fx.id]} />
           ))}
         </div>
       ))}
@@ -571,7 +578,7 @@ function ScorerGroup({ team, list, values, disabled, onPick }) {
   )
 }
 
-function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveScore, uid }) {
+function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveScore, uid, myPts }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
   const live = fx.status === 'live'
@@ -663,7 +670,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
       <div className="fx-foot">
         {finished
-          ? <><span className="realscore">Résultat : {fx.score1}–{fx.score2}</span><span className="pts">+{pts} pts</span></>
+          ? <><span className="realscore">Résultat : {fx.score1}–{fx.score2}</span><span className="pts">+{myPts != null ? myPts : pts} pts</span></>
           : live
             ? <><span className="realscore">🔴 En direct : {fx.score1}–{fx.score2}</span><span className="muted" style={{ fontSize: 12 }}>points provisoires ↓</span></>
             : locked
