@@ -558,6 +558,7 @@ function ScorerGroup({ team, list, values, disabled, onPick }) {
 function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveScore, uid }) {
   const locked = new Date() >= new Date(fx.kickoff_utc)
   const finished = fx.status === 'finished'
+  const live = fx.status === 'live'
   const [p1, setP1] = useState(pred?.pred1 ?? 0)
   const [p2, setP2] = useState(pred?.pred2 ?? 0)
   const [sc1, setSc1] = useState([])
@@ -566,17 +567,18 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
   const [others, setOthers] = useState(null)
   const [showOthers, setShowOthers] = useState(false)
 
+  async function refreshOthers() {
+    const { data } = await supabase.from('points_detail')
+      .select('display_name,user_id,pred1,pred2,has_prono,base_pts,scorer_pts,buteurs_pronos')
+      .eq('group_id', group.id).eq('fixture_id', fx.id)
+    const sorted = (data || []).slice().sort((a, b) =>
+      (b.has_prono - a.has_prono) || (((b.base_pts || 0) + (b.scorer_pts || 0)) - ((a.base_pts || 0) + (a.scorer_pts || 0))))
+    setOthers(sorted)
+  }
   async function loadOthers() {
     if (showOthers) { setShowOthers(false); return }
     setShowOthers(true)
-    if (others === null) {
-      const { data } = await supabase.from('points_detail')
-        .select('display_name,user_id,pred1,pred2,has_prono,base_pts,scorer_pts,buteurs_pronos')
-        .eq('group_id', group.id).eq('fixture_id', fx.id)
-      const sorted = (data || []).slice().sort((a, b) =>
-        (b.has_prono - a.has_prono) || (((b.base_pts || 0) + (b.scorer_pts || 0)) - ((a.base_pts || 0) + (a.scorer_pts || 0))))
-      setOthers(sorted)
-    }
+    if (others === null) await refreshOthers()
   }
 
   useEffect(() => { setP1(pred?.pred1 ?? 0); setP2(pred?.pred2 ?? 0) }, [pred])
@@ -603,6 +605,13 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
   useEffect(() => { sc1Ref.current = sc1 }, [sc1])
   useEffect(() => { sc2Ref.current = sc2 }, [sc2])
 
+  // rafraichit les points provisoires pendant un match en direct
+  useEffect(() => {
+    if (!live || !showOthers) return
+    const id = setInterval(() => { refreshOthers() }, 90000)
+    return () => clearInterval(id)
+  }, [live, showOthers])
+
   const commit = (np1, np2, ns1, ns2) => onSave(fx, np1, np2, [...ns1, ...ns2])
 
   const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
@@ -612,7 +621,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
     <div className="card fx">
       <div className="fx-top">
         <span className="fx-time">🕘 {fmtTime(fx.kickoff_utc)}</span>
-        {finished ? <span className="tag done">Terminé</span> : locked ? <span className="locked">🔒 Verrouillé</span> : <span className="tag">Ouvert</span>}
+        {live ? <span className="tag" style={{ background: '#e23', color: '#fff' }}>🔴 EN DIRECT</span> : finished ? <span className="tag done">Terminé</span> : locked ? <span className="locked">🔒 Verrouillé</span> : <span className="tag">Ouvert</span>}
       </div>
       <div className="teams">
         <div className="team r">{fx.team1}</div>
@@ -637,15 +646,17 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
       <div className="fx-foot">
         {finished
           ? <><span className="realscore">Résultat : {fx.score1}–{fx.score2}</span><span className="pts">+{pts} pts</span></>
-          : <><span className="muted" style={{ fontSize: 12 }}>{locked && !pred ? 'Pas de prono → 0–0 par défaut' : 'Ton prono'}</span>
-            <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>}
+          : live
+            ? <><span className="realscore">🔴 En direct : {fx.score1}–{fx.score2}</span><span className="muted" style={{ fontSize: 12 }}>points provisoires ↓</span></>
+            : <><span className="muted" style={{ fontSize: 12 }}>{locked && !pred ? 'Pas de prono → 0–0 par défaut' : 'Ton prono'}</span>
+              <span className="muted" style={{ fontSize: 12 }}>{group.group_label}</span></>}
       </div>
 
       {locked && (
         <div style={{ marginTop: 8, borderTop: '1px solid rgba(0,0,0,0.08)', paddingTop: 8 }}>
           <button onClick={loadOthers}
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'inherit', textDecoration: 'underline' }}>
-            {showOthers ? '▴ Masquer les pronos des autres' : '👀 Voir les pronos des autres'}
+            {showOthers ? '▴ Masquer' : (live ? '🔴 Voir les points en direct' : '👀 Voir les pronos des autres')}
           </button>
           {showOthers && (
             others === null
@@ -662,7 +673,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
                         </div>
                         <div style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
                           {o.has_prono ? `${o.pred1}–${o.pred2}` : <span className="muted">pas de prono</span>}
-                          {finished && o.has_prono ? <span className="muted" style={{ marginLeft: 8 }}>+{(o.base_pts || 0) + (o.scorer_pts || 0)}</span> : ''}
+                          {(finished || live) && o.has_prono ? <span className="muted" style={{ marginLeft: 8 }}>{live ? '≈ ' : ''}+{(o.base_pts || 0) + (o.scorer_pts || 0)}{live ? ' (prov.)' : ''}</span> : ''}
                         </div>
                       </div>
                     ))}
