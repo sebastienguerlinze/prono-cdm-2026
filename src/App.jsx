@@ -296,11 +296,14 @@ function Members({ notify, onCancel }) {
   const [pwd, setPwd] = useState('')
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(null)      // { prenom, email, password } après succès
+  const [dups, setDups] = useState([])        // doublons détectés
 
   const load = async () => {
     const { data, error } = await supabase.rpc('admin_list_members')
     if (error) { notify('Err: ' + (error.message || error.code || 'inconnue')); setRows([]); return }
     setRows(data || [])
+    const { data: d } = await supabase.rpc('admin_duplicate_members')
+    setDups(d || [])
   }
   useEffect(() => { load() }, [])
 
@@ -326,6 +329,18 @@ function Members({ notify, onCancel }) {
     <>
       <div className="topbar"><button className="ghost-btn" onClick={onCancel}>← Retour</button><b className="display">Membres</b><span style={{ width: 60 }} /></div>
       <div className="wrap">
+        {dups.length > 0 && (
+          <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #e23b3b' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>⚠️ Doublons détectés ({dups.length})</div>
+            {dups.map((d, i) => (
+              <div key={i} style={{ fontSize: 13, marginTop: 6 }}>
+                <b>{d.prenom}</b> dans « {(d.groupe || '').trim()} » — {d.nb_comptes} comptes
+                <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>{d.comptes}</div>
+              </div>
+            ))}
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Pense à fusionner / nettoyer ces comptes (ou demande-moi de le faire).</div>
+          </div>
+        )}
         {done && (
           <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #12914e' }}>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>✅ Identifiants à transmettre à {done.prenom || 'ce membre'}</div>
