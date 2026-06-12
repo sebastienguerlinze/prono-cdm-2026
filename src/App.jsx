@@ -794,15 +794,17 @@ function Fantasy({ group, uid, notify }) {
 
 /* ================= CLASSEMENT DES JOUEURS PAR SECTEUR ================= */
 const SECTORS = [
+  { key: 'ALL', label: 'Général' },
   { key: 'Goalkeeper', label: 'Gardiens' },
   { key: 'Defender', label: 'Défenseurs' },
   { key: 'Midfielder', label: 'Milieux' },
   { key: 'Attacker', label: 'Attaquants' },
 ]
+const POS_FR = { Goalkeeper: 'Gardien', Defender: 'Défenseur', Midfielder: 'Milieu', Attacker: 'Attaquant' }
 
 function PlayerRanking() {
   const [rows, setRows] = useState(null)
-  const [sector, setSector] = useState('Attacker')
+  const [sector, setSector] = useState('ALL')
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from('player_ranking').select('*').order('total_points', { ascending: false })
@@ -811,7 +813,7 @@ function PlayerRanking() {
   }, [])
   if (rows === null) return <div className="center"><div className="spinner" /></div>
   const anyPlayed = rows.some(r => r.matches > 0)
-  const list = rows.filter(r => r.position === sector).slice(0, 30)
+  const list = (sector === 'ALL' ? rows : rows.filter(r => r.position === sector)).slice(0, 30)
   return (
     <>
       <h2 style={{ fontSize: 24, margin: '4px 2px 12px' }}>Classement des joueurs</h2>
@@ -826,11 +828,11 @@ function PlayerRanking() {
         {list.map((r, i) => (
           <div className="lb-row" key={r.id}>
             <div className={'rank r' + (i + 1)}>{i + 1}</div>
-            <div className="lb-name">{r.name}<div className="lb-sub">{r.team_code} · {r.matches} match{r.matches > 1 ? 's' : ''}</div></div>
+            <div className="lb-name">{r.name}<div className="lb-sub">{r.team_code}{sector === 'ALL' ? ' · ' + (POS_FR[r.position] || r.position) : ''} · {r.matches} match{r.matches > 1 ? 's' : ''}</div></div>
             <div className="lb-pts">{r.total_points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
           </div>
         ))}
-        {!list.length && <div className="empty" style={{ padding: 20 }}>Aucun joueur dans ce secteur.</div>}
+        {!list.length && <div className="empty" style={{ padding: 20 }}>{sector === 'ALL' ? 'Aucun joueur.' : 'Aucun joueur dans ce secteur.'}</div>}
       </div>
     </>
   )
