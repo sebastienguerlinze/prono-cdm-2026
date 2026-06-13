@@ -205,7 +205,7 @@ function Shell({ session, isAdmin, notify }) {
 
 /* ================= SÉCURISER SON COMPTE (e-mail + mot de passe) ================= */
 function SecureAccount({ email, notify }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const [mail, setMail] = useState('')
   const [pwd, setPwd] = useState('')
   const [busy, setBusy] = useState(false)
@@ -229,13 +229,13 @@ function SecureAccount({ email, notify }) {
   }
 
   return (
-    <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #e0a200' }}>
-      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>🔒 Sécurise ton compte</div>
+    <div className="card" style={{ marginBottom: 14, borderLeft: '3px solid #e23b3b' }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>⚠️ Sécurise ton compte — important</div>
       <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-        Ajoute un e-mail + mot de passe pour retrouver tes pronos sur n'importe quel appareil. Sans ça, une déconnexion = perte d'accès à tes pronos.
+        Ton compte n'a <b>pas encore d'e-mail</b>. Si tu changes de téléphone, vides ton navigateur ou te déconnectes, tu <b>perdras l'accès à tes pronos</b> — et tu risques d'en <b>recréer un en double</b>. Ajoute un e-mail + mot de passe (30 secondes) pour le retrouver partout.
       </div>
       {!open ? (
-        <button className="btn" onClick={() => setOpen(true)}>Sécuriser mon compte</button>
+        <button className="btn" onClick={() => setOpen(true)}>Sécuriser maintenant</button>
       ) : (
         <>
           <div className="field"><label>E-mail</label>
