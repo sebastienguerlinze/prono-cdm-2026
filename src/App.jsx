@@ -1018,6 +1018,12 @@ function Fantasy({ group, uid, notify }) {
   // verrouillé si : explicitement verrouillé, OU équipe complète et tournoi commencé
   const locked = !!lockedAt || (complete && started)
 
+  // détail de ce qui manque pour une équipe complète
+  const missingParts = []
+  FORMATION.forEach(f => { const m = f.need - countPos(f.key); if (m > 0) missingParts.push(m > 1 ? `${m} ${f.label.toLowerCase()}` : `1 ${f.single}`) })
+  if (!hasCaptain) missingParts.push('un capitaine')
+  const missingText = missingParts.join(', ')
+
   const saveSquad = async (list) => {
     if (locked) return
     let id = squadRef.current
@@ -1078,9 +1084,9 @@ function Fantasy({ group, uid, notify }) {
           <span style={{ fontSize: 13 }}>🔒 <b>Équipe verrouillée</b> — le tournoi a commencé, plus de changement possible.</span>
         </div>
       )}
-      {!locked && started && !complete && (
+      {!locked && !complete && (
         <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #e0a200' }}>
-          <span style={{ fontSize: 13 }}>⚠️ <b>Le tournoi a commencé.</b> Tu peux encore composer ton équipe, mais tu ne marqueras <b>pas</b> les points des matchs déjà joués. Elle se <b>verrouille dès qu'elle est complète</b>.</span>
+          <span style={{ fontSize: 13 }}>⚠️ <b>Équipe incomplète ({total}/11).</b> Il te manque : {missingText}. Tant qu'elle n'est pas au complet (11 joueurs + capitaine), elle n'est <b>pas valable</b>.{started ? ' Et le tournoi a déjà commencé : complète-la vite, tu ne marques pas les points des matchs déjà joués.' : ''}</span>
         </div>
       )}
       <div className="card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
