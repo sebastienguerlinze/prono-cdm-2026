@@ -141,9 +141,19 @@ function Auth({ notify }) {
               <div className="field"><label>Ton prénom (visible au classement)</label>
                 <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Sébastien"
                   onKeyDown={e => e.key === 'Enter' && enter()} /></div>
-              <button className="btn" onClick={enter} disabled={busy}>{busy ? '…' : "C'est parti !"}</button>
-              <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 14 }}>
-                Déjà un compte sécurisé ? <span style={linkStyle} onClick={() => setMode('login')}>Se reconnecter</span>
+              <button className="btn" onClick={enter} disabled={busy}>{busy ? '…' : 'Créer mon compte'}</button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0' }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--line, rgba(125,125,125,.3))' }} />
+                <span className="muted" style={{ fontSize: 12 }}>ou</span>
+                <div style={{ flex: 1, height: 1, background: 'var(--line, rgba(125,125,125,.3))' }} />
+              </div>
+
+              <button className="btn alt" onClick={() => setMode('login')} disabled={busy} style={{ width: '100%' }}>
+                🔑 J'ai déjà un compte — Se reconnecter
+              </button>
+              <p className="muted" style={{ fontSize: 12, textAlign: 'center', marginTop: 12 }}>
+                Déjà joué (sur un autre téléphone, navigateur…) ? <b>Reconnecte-toi</b> avec ton e-mail — ne crée pas un 2ᵉ compte.
               </p>
             </>
           ) : (
