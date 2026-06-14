@@ -725,8 +725,8 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
                           {o.buteurs_pronos && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>⚽ {o.buteurs_pronos}</div>}
                         </div>
                         <div style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
-                          {o.has_prono ? `${o.pred1}–${o.pred2}` : <span className="muted">pas de prono</span>}
-                          {(finished || live) && o.has_prono ? <span className="muted" style={{ marginLeft: 8 }}>{live ? '≈ ' : ''}+{(o.base_pts || 0) + (o.scorer_pts || 0)}{live ? ' (prov.)' : ''}</span> : ''}
+                          {o.has_prono ? `${o.pred1}–${o.pred2}` : <span className="muted">0–0 <span style={{ fontSize: 11 }}>(déf.)</span></span>}
+                          {(finished || live) ? <span className="muted" style={{ marginLeft: 8 }}>{live ? '≈ ' : ''}+{(o.base_pts || 0) + (o.scorer_pts || 0)}{live ? ' (prov.)' : ''}</span> : ''}
                         </div>
                       </div>
                     ))}
@@ -933,7 +933,7 @@ function Classement({ group, uid }) {
                           <div key={d.fixture_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                             <div style={{ minWidth: 0 }}>
                               <div style={{ fontSize: 13 }}>{d.team1} {fini ? `${d.score1}-${d.score2}` : 'vs'} {d.team2}</div>
-                              <div className="lb-sub">{d.has_prono ? `Prono ${d.pred1}-${d.pred2}` : 'Pas de prono'}{d.scorer_pts > 0 ? ` · ${d.scorer_pts} buteur${d.scorer_pts > 1 ? 's' : ''} ✓` : ''}</div>
+                              <div className="lb-sub">{d.has_prono ? `Prono ${d.pred1}-${d.pred2}` : 'Prono 0-0 (par défaut)'}{d.scorer_pts > 0 ? ` · ${d.scorer_pts} buteur${d.scorer_pts > 1 ? 's' : ''} ✓` : ''}</div>
                               {d.buteurs_pronos && <div className="lb-sub" style={{ marginTop: 1 }}>⚽ {d.buteurs_pronos}</div>}
                             </div>
                             <div className="lb-pts" style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{fini ? `+${total}` : '—'}<span className="lb-sub" style={{ marginLeft: 3 }}>{fini ? 'pts' : 'à venir'}</span></div>
