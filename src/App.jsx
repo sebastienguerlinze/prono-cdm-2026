@@ -478,6 +478,7 @@ function Matchs({ group, uid, notify }) {
   const [phase, setPhase] = useState('group')
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
   const [myPoints, setMyPoints] = useState({}) // fixture_id -> total (base + buteurs), meme source que le classement
+  const [showPast, setShowPast] = useState(false) // replier les matchs déjà joués
   const [, setTick] = useState(0)              // rafraichit les comptes à rebours
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 30000); return () => clearInterval(id) }, [])
   // re-synchronise la liste des matchs (scores/statuts en direct) + points sans tout recharger
@@ -560,6 +561,19 @@ function Matchs({ group, uid, notify }) {
   const win48 = nowMs + 48 * 3600 * 1000
   const soonAll = fixtures.filter(f => { const k = new Date(f.kickoff_utc).getTime(); return k > nowMs && k <= win48 && f.status !== 'finished' })
   const soonTodo = soonAll.filter(f => !preds[f.id])
+  // on sépare les journées déjà jouées (avant aujourd'hui) des journées du jour + à venir
+  const todayKey = dayKey(new Date().toISOString())
+  const pastDays = days.filter(d => d < todayKey)
+  const upcomingDays = days.filter(d => d >= todayKey)
+  const allPast = upcomingDays.length === 0
+  const renderDay = (d) => (
+    <div key={d}>
+      <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
+      {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
+        <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} onSaveScore={saveScore} uid={uid} myPts={myPoints[fx.id]} />
+      ))}
+    </div>
+  )
   return (
     <>
       {soonAll.length > 0 && (
@@ -574,14 +588,14 @@ function Matchs({ group, uid, notify }) {
       <div className="seg" style={{ marginBottom: 14, overflowX: 'auto' }}>
         {Object.keys(PHASES).map(p => <button key={p} className={phase === p ? 'on' : ''} onClick={() => setPhase(p)} style={{ whiteSpace: 'nowrap' }}>{PHASES[p]}</button>)}
       </div>
-      {days.map(d => (
-        <div key={d}>
-          <div className="daygroup">{fmtDay(list.find(f => dayKey(f.kickoff_utc) === d).kickoff_utc)}</div>
-          {list.filter(f => dayKey(f.kickoff_utc) === d).map(fx => (
-            <FixtureCard key={fx.id} fx={fx} pred={preds[fx.id]} group={group} byTeam={byTeam} scorers={scorers[fx.id]} ready={ready} onSave={save} onSaveScore={saveScore} uid={uid} myPts={myPoints[fx.id]} />
-          ))}
-        </div>
-      ))}
+      {!allPast && pastDays.length > 0 && (
+        <button className="btn alt" style={{ width: '100%', marginBottom: 10, fontSize: 13 }} onClick={() => setShowPast(s => !s)}>
+          {showPast ? '▾ Masquer les matchs déjà joués' : `📁 Voir les matchs déjà joués (${pastDays.length} jour${pastDays.length > 1 ? 's' : ''})`}
+        </button>
+      )}
+      {allPast
+        ? days.map(renderDay)
+        : <>{showPast && pastDays.map(renderDay)}{upcomingDays.map(renderDay)}</>}
     </>
   )
 }
