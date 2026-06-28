@@ -718,7 +718,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
   const commit = (np1, np2, ns1, ns2) => onSave(fx, np1, np2, [...ns1, ...ns2])
 
-  const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
+  const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, fx.winner, group) : null
   const showScorers = group.scorers_enabled && !finished && (p1 > 0 || p2 > 0)
   const msLeft = new Date(fx.kickoff_utc).getTime() - Date.now()
   const soon = msLeft > 0 && msLeft <= 2 * 3600 * 1000
@@ -796,10 +796,13 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
 const clamp = (v) => Math.max(0, Math.min(20, parseInt(v || 0, 10) || 0))
 
-function scoreOf(p1, p2, r1, r2, g) {
+function scoreOf(p1, p2, r1, r2, w, g) {
   if (r1 == null || r2 == null) return 0
-  if (p1 === r1 && p2 === r2) return g.pts_exact
-  if (Math.sign(p1 - p2) === Math.sign(r1 - r2)) return g.pts_outcome + ((p1 - p2) === (r1 - r2) ? g.pts_goaldiff : 0)
+  const a = p1 ?? 0, b = p2 ?? 0
+  if (a === r1 && b === r2) return g.pts_exact
+  // resultat (1N2) juge sur le vrai vainqueur (prolongation + t.a.b. inclus), comme le serveur
+  const good = (w === 1 && a > b) || (w === 2 && b > a) || (w == null && a === b)
+  if (good) return g.pts_outcome + ((a - b) === (r1 - r2) ? g.pts_goaldiff : 0)
   return 0
 }
 
