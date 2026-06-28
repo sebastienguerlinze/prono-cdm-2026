@@ -474,6 +474,8 @@ function Matchs({ group, uid, notify }) {
   const [fixtures, setFixtures] = useState(null)
   const [preds, setPreds] = useState({})      // fixture_id -> {id, pred1, pred2}
   const [scorers, setScorers] = useState({})  // fixture_id -> [player_name, ...] (équipe1 + équipe2 mélangés)
+  const scorerRowsRef = useRef({})            // fixture_id -> [{id, name}, ...] : lignes réellement en base (source de vérité pour le diff ciblé)
+  const scorerQueueRef = useRef({})           // fixture_id -> Promise : sérialise les écritures buteurs (anti-course)
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
@@ -515,32 +517,72 @@ function Matchs({ group, uid, notify }) {
       // buteurs déjà choisis
       const ids = (pr || []).map(p => p.id)
       if (ids.length) {
-        const { data: sc } = await supabase.from('prediction_scorers').select('prediction_id,player_name').in('prediction_id', ids)
+        const { data: sc } = await supabase.from('prediction_scorers').select('id,prediction_id,player_name').in('prediction_id', ids)
         const predToFx = {}; (pr || []).forEach(p => predToFx[p.id] = p.fixture_id)
-        const sm = {}
-        ;(sc || []).forEach(s => { const fId = predToFx[s.prediction_id]; (sm[fId] = sm[fId] || []).push(s.player_name) })
+        const sm = {}; const rows = {}
+        ;(sc || []).forEach(s => {
+          const fId = predToFx[s.prediction_id]
+          ;(sm[fId] = sm[fId] || []).push(s.player_name)
+          ;(rows[fId] = rows[fId] || []).push({ id: s.id, name: s.player_name })
+        })
         setScorers(sm)
+        scorerRowsRef.current = rows
       }
       setReady(true)
     })()
   }, [group.id, uid])
 
-  // enregistre le score ET les buteurs en une fois
+  // ajoute/retire des buteurs de façon CIBLÉE (un buteur à la fois), sans tout réécrire.
+  // diff en multiset : on garde ce qui est commun, on supprime/insère le strict nécessaire.
+  // les doublons volontaires (= pronostiquer un doublé) sont préservés : pas de contrainte d'unicité.
   const save = async (fx, pred1, pred2, names) => {
-    setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), pred1, pred2 } }))
-    const { data, error } = await supabase.from('predictions').upsert(
-      { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
-      { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
-    if (error || !data) { notify('Sauvegarde impossible'); return }
-    const predId = data.id
-    setPreds(s => ({ ...s, [fx.id]: { id: predId, pred1, pred2 } }))
-    // on remplace la liste des buteurs (simple et fiable)
-    await supabase.from('prediction_scorers').delete().eq('prediction_id', predId)
-    const clean = (names || []).filter(Boolean)
-    if (clean.length) {
-      await supabase.from('prediction_scorers').insert(clean.map(n => ({ prediction_id: predId, player_name: n })))
+    // on s'assure d'avoir un prediction_id, SANS réécrire le score si le prono existe déjà
+    let predId = preds[fx.id]?.id
+    if (!predId) {
+      const { data, error } = await supabase.from('predictions').upsert(
+        { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
+        { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
+      if (error || !data) { notify('Sauvegarde impossible'); return }
+      predId = data.id
+      setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), id: predId, pred1, pred2 } }))
     }
-    notify('Prono enregistré ✓')
+
+    const run = async () => {
+      const wanted = (names || []).filter(Boolean)
+      const pool = (scorerRowsRef.current[fx.id] || []).map(r => ({ ...r, used: false }))
+      const keep = []   // lignes déjà en base que l'on conserve
+      const toAdd = []  // noms à insérer
+      for (const n of wanted) {
+        const hit = pool.find(r => !r.used && r.name === n)
+        if (hit) { hit.used = true; keep.push({ id: hit.id, name: hit.name }) }
+        else toAdd.push(n)
+      }
+      const toDelete = pool.filter(r => !r.used).map(r => r.id)  // occurrences en trop
+      if (!toAdd.length && !toDelete.length) return              // rien n'a changé : silencieux
+
+      if (toDelete.length) {
+        const { error } = await supabase.from('prediction_scorers').delete().in('id', toDelete)
+        if (error) { notify('Sauvegarde impossible'); return }
+      }
+      let added = []
+      if (toAdd.length) {
+        const { data, error } = await supabase.from('prediction_scorers')
+          .insert(toAdd.map(n => ({ prediction_id: predId, player_name: n })))
+          .select('id,player_name')
+        if (error || !data) { notify('Sauvegarde impossible'); return }
+        added = data.map(r => ({ id: r.id, name: r.player_name }))
+      }
+      const finalRows = [...keep, ...added]
+      scorerRowsRef.current = { ...scorerRowsRef.current, [fx.id]: finalRows }
+      setScorers(s => ({ ...s, [fx.id]: finalRows.map(r => r.name) }))
+      notify('Prono enregistré ✓')
+    }
+
+    // file d'attente par match : les écritures s'enchaînent dans l'ordre → plus de courses
+    const prev = scorerQueueRef.current[fx.id] || Promise.resolve()
+    const next = prev.then(run, run)
+    scorerQueueRef.current[fx.id] = next
+    await next
   }
 
   // sauvegarde du SCORE uniquement — ne touche jamais aux buteurs deja enregistres
