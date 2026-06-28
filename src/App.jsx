@@ -1088,8 +1088,13 @@ function Fantasy({ group, uid, notify }) {
 
   const setCaptain = async (player_id) => {
     const id = squadRef.current; if (!id) return
-    await supabase.from('fantasy_picks').update({ is_captain: false }).eq('squad_id', id)
-    await supabase.from('fantasy_picks').update({ is_captain: true }).eq('squad_id', id).eq('player_id', player_id)
+    const { error } = await supabase.rpc('set_captain', { p_squad_id: id, p_player_id: player_id })
+    if (error) {
+      notify(error.message?.includes('capitaine_verrouille')
+        ? 'Capitaine verrouillé : la phase a déjà commencé.'
+        : 'Changement de capitaine impossible')
+      return
+    }
     setPicks(picks.map(p => ({ ...p, is_captain: p.player_id === player_id })))
   }
 
