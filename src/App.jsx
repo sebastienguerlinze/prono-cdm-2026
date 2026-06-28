@@ -192,7 +192,7 @@ function Shell({ session, isAdmin, notify }) {
         {tab === 'matchs' && <Matchs group={group} uid={uid} notify={notify} />}
         {tab === 'classement' && <Classement group={group} uid={uid} />}
         {tab === 'cagnotte' && <Cagnotte group={group} />}
-        {tab === 'fantasy' && (group.fantasy_enabled ? <Fantasy group={group} uid={uid} notify={notify} /> : <FantasySoon group={group} />)}
+        {tab === 'fantasy' && (group.fantasy_enabled ? <Fantasy group={group} uid={uid} notify={notify} isAdmin={isAdmin} /> : <FantasySoon group={group} />)}
         {tab === 'joueurs' && <PlayerRanking />}
       </div>
       <nav className="nav">
@@ -1002,50 +1002,61 @@ const FORMATION = [
   { key: 'Attacker', label: 'Attaquants', need: 2, single: 'attaquant' },
 ]
 
-function Fantasy({ group, uid, notify }) {
+function Fantasy({ group, uid, notify, isAdmin }) {
+  const PHASE_ORDER = { group:0, r32:1, r16:2, qf:3, sf:4, third:5, final:6 }
   const [players, setPlayers] = useState(null)
-  const [picks, setPicks] = useState([])     // [{player_id, position, name, team_code, is_captain}]
-  const [sessionAdded, setSessionAdded] = useState(() => new Set())  // joueurs ajoutés dans cette session (retirables, pas encore définitifs)
-  const [adding, setAdding] = useState(null)  // position en cours d'ajout
+  const [picks, setPicks] = useState([])
+  const [phase, setPhaseState] = useState('group')
+  const [sessionAdded, setSessionAdded] = useState(() => new Set())
+  const [adding, setAdding] = useState(null)
+  const [swapOut, setSwapOut] = useState(null)
   const [q, setQ] = useState('')
   const squadRef = useRef(null)
-  const [lockedAt, setLockedAt] = useState(null)     // équipe verrouillée ?
-  const [kickoff, setKickoff] = useState(null)        // 1er coup d'envoi de la phase
-  const [view, setView] = useState('team')            // 'team' | 'ranking'
+  const [kickoff, setKickoff] = useState(null)
+  const [view, setView] = useState('team')
+  const [elim, setElim] = useState(() => new Set())
+  const [winOpen, setWinOpen] = useState(false)
+  const [comfortLeft, setComfortLeft] = useState(null)
+  const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    (async () => {
-      const pl = await fetchAllPlayers('id,name,team_code,position')
-      setPlayers(pl || [])
-      const { data: ko } = await supabase.from('fixtures').select('kickoff_utc').eq('phase', FANTASY_PHASE).order('kickoff_utc').limit(1).maybeSingle()
-      setKickoff(ko?.kickoff_utc || null)
-      const { data: sq } = await supabase.from('fantasy_squads')
-        .select('id,locked_at').eq('group_id', group.id).eq('user_id', uid).eq('phase', FANTASY_PHASE).maybeSingle()
-      if (sq) {
-        squadRef.current = sq.id
-        setLockedAt(sq.locked_at || null)
-        const { data: fp } = await supabase.from('fantasy_picks').select('player_id,is_captain').eq('squad_id', sq.id)
-        const byId = {}; (pl || []).forEach(p => byId[p.id] = p)
-        setPicks((fp || []).map(x => {
-          const p = byId[x.player_id] || {}
-          return { player_id: x.player_id, position: p.position, name: p.name, team_code: p.team_code, is_captain: x.is_captain }
-        }))
-      }
-    })()
+  const loadAll = useCallback(async () => {
+    const pl = await fetchAllPlayers('id,name,team_code,position')
+    setPlayers(pl || [])
+    const { data: ts } = await supabase.from('v_team_status').select('team_code,eliminated')
+    setElim(new Set((ts || []).filter(t => t.eliminated).map(t => t.team_code)))
+    const { data: sqs } = await supabase.from('fantasy_squads').select('id,phase').eq('group_id', group.id).eq('user_id', uid)
+    const active = (sqs || []).slice().sort((a,b)=>(PHASE_ORDER[b.phase]??-1)-(PHASE_ORDER[a.phase]??-1))[0] || null
+    const ph = active ? active.phase : 'group'
+    setPhaseState(ph)
+    squadRef.current = active ? active.id : null
+    const { data: ko } = await supabase.from('fixtures').select('kickoff_utc').eq('phase', ph).order('kickoff_utc').limit(1).maybeSingle()
+    setKickoff(ko?.kickoff_utc || null)
+    if (active) {
+      const { data: fp } = await supabase.from('fantasy_picks').select('player_id,is_captain,removed_at').eq('squad_id', active.id)
+      const byId = {}; (pl || []).forEach(p => byId[p.id] = p)
+      setPicks((fp || []).filter(x => !x.removed_at).map(x => {
+        const p = byId[x.player_id] || {}
+        return { player_id: x.player_id, position: p.position, name: p.name, team_code: p.team_code, is_captain: x.is_captain }
+      }))
+    } else setPicks([])
+    const { data: win } = await supabase.from('transfer_windows').select('phase,is_open').eq('group_id', group.id).eq('is_open', true).maybeSingle()
+    setWinOpen(!!win && win.phase === ph && ph !== 'group')
+    if (active && ph !== 'group') {
+      const { data: qd } = await supabase.from('v_transfer_quota').select('comfort_left').eq('squad_id', active.id).eq('phase', ph).maybeSingle()
+      setComfortLeft(qd ? qd.comfort_left : null)
+    } else setComfortLeft(null)
   }, [group.id, uid])
+
+  useEffect(() => { loadAll() }, [loadAll])
 
   const countPos = (key) => picks.filter(p => p.position === key).length
   const total = picks.length
   const hasCaptain = picks.some(p => p.is_captain)
   const complete = FORMATION.every(f => countPos(f.key) === f.need) && hasCaptain
-
   const started = kickoff ? new Date() >= new Date(kickoff) : false
-  // Règle : les joueurs déjà enregistrés sont définitifs ; on peut toujours compléter,
-  // chaque joueur ajouté compte à partir de son entrée. Un joueur ajouté pendant la session
-  // peut encore être retiré (erreur de clic) tant qu'on n'a pas quitté la page.
+  const isKO = phase !== 'group'
   const canRemove = (player_id) => sessionAdded.has(player_id)
 
-  // détail de ce qui manque pour une équipe complète
   const missingParts = []
   FORMATION.forEach(f => { const m = f.need - countPos(f.key); if (m > 0) missingParts.push(m > 1 ? `${m} ${f.label.toLowerCase()}` : `1 ${f.single}`) })
   if (!hasCaptain) missingParts.push('un capitaine')
@@ -1055,7 +1066,7 @@ function Fantasy({ group, uid, notify }) {
     let id = squadRef.current
     if (!id) {
       const { data, error } = await supabase.from('fantasy_squads')
-        .insert({ group_id: group.id, user_id: uid, phase: FANTASY_PHASE, budget: 0 }).select('id').single()
+        .insert({ group_id: group.id, user_id: uid, phase: 'group', budget: 0 }).select('id').single()
       if (error || !data) { notify('Sauvegarde impossible'); return null }
       id = data.id; squadRef.current = id
     }
@@ -1066,24 +1077,47 @@ function Fantasy({ group, uid, notify }) {
     const need = FORMATION.find(f => f.key === p.position)?.need ?? 0
     if (picks.filter(x => x.position === p.position).length >= need) return notify('Ce secteur est complet')
     if (picks.some(x => x.player_id === p.id)) return notify('Déjà dans ton équipe')
+    if (elim.has(p.team_code)) return notify('Équipe éliminée : joueur indisponible')
     const id = await ensureSquad(); if (!id) return
-    // ajout ciblé : on n'efface jamais les joueurs déjà en place (date d'entrée = maintenant)
     const { error } = await supabase.from('fantasy_picks').insert({ squad_id: id, player_id: p.id, is_captain: false })
     if (error) { notify('Ajout impossible'); return }
-    const next = [...picks, { player_id: p.id, position: p.position, name: p.name, team_code: p.team_code, is_captain: false }]
-    setPicks(next); setQ('')
+    setPicks([...picks, { player_id: p.id, position: p.position, name: p.name, team_code: p.team_code, is_captain: false }])
+    setQ(''); setAdding(null)
     setSessionAdded(s => { const n = new Set(s); n.add(p.id); return n })
     notify(started ? 'Joueur ajouté ✓ Il marque à partir de maintenant' : 'Joueur ajouté ✓')
-    if (next.filter(x => x.position === p.position).length >= need) setAdding(null)
   }
 
   const removePlayer = async (player_id) => {
-    if (!sessionAdded.has(player_id)) return notify('Ce joueur est définitif : il compte déjà pour ton équipe et ne peut plus être retiré.')
+    if (!sessionAdded.has(player_id)) return notify('Ce joueur est définitif : il ne peut plus être retiré.')
     const id = squadRef.current; if (!id) return
     await supabase.from('fantasy_picks').delete().eq('squad_id', id).eq('player_id', player_id)
     setPicks(picks.filter(p => p.player_id !== player_id))
     setSessionAdded(s => { const n = new Set(s); n.delete(player_id); return n })
     notify('Joueur retiré')
+  }
+
+  const ERR = {
+    fenetre_fermee: 'La fenêtre de transferts est fermée.',
+    quota_confort_epuise: 'Plus de transfert confort (2 max aux 16es).',
+    confort_interdit_apres_r32: 'Transfert confort possible uniquement aux 16es.',
+    entrant_elimine: 'Ce joueur est dans une équipe éliminée.',
+    position_differente: 'Le remplaçant doit jouer au même poste.',
+    entrant_deja_pris: 'Ce joueur est déjà dans ton équipe.',
+    sortant_absent: 'Joueur introuvable dans ton équipe.',
+  }
+  const doSwap = async (out, p) => {
+    const id = squadRef.current; if (!id) return
+    if (elim.has(p.team_code)) return notify('Équipe éliminée : joueur indisponible')
+    setBusy(true)
+    const { data, error } = await supabase.rpc('do_transfer', { p_squad_id: id, p_player_out: out, p_player_in: p.id })
+    setBusy(false)
+    if (error) {
+      const code = Object.keys(ERR).find(k => (error.message || '').includes(k))
+      notify(code ? ERR[code] : 'Transfert impossible'); return
+    }
+    setSwapOut(null); setQ('')
+    notify(data?.kind === 'forced' ? 'Remplacement effectué ✓ (gratuit)' : `Transfert confort ✓ (reste ${data?.comfort_left ?? '?'})`)
+    await loadAll()
   }
 
   const setCaptain = async (player_id) => {
@@ -1098,13 +1132,30 @@ function Fantasy({ group, uid, notify }) {
     setPicks(picks.map(p => ({ ...p, is_captain: p.player_id === player_id })))
   }
 
+  const KO_PHASES = [['r32','16es'],['r16','8es'],['qf','Quarts'],['sf','Demies']]
+  const openWindow = async (ph) => {
+    setBusy(true)
+    const { error } = await supabase.rpc('open_transfer_window', { p_group_id: group.id, p_phase: ph })
+    setBusy(false)
+    if (error) { notify('Ouverture impossible'); return }
+    notify('Fenêtre ouverte ✓'); await loadAll()
+  }
+  const closeWindow = async () => {
+    setBusy(true)
+    const { error } = await supabase.rpc('close_transfer_window', { p_group_id: group.id, p_phase: null })
+    setBusy(false)
+    if (error) { notify('Fermeture impossible'); return }
+    notify('Fenêtre fermée ✓'); await loadAll()
+  }
+
   if (players === null) return <div className="center"><div className="spinner" /></div>
 
   const pickedIds = new Set(picks.map(p => p.player_id))
-  const filtered = adding
-    ? players.filter(p => p.position === adding && !pickedIds.has(p.id) && (
-      p.name.toLowerCase().includes(q.toLowerCase()) || (p.team_code || '').toLowerCase().includes(q.toLowerCase())
-    )).slice(0, 60)
+  const searchPos = swapOut ? swapOut.position : adding
+  const filtered = searchPos
+    ? players.filter(p => p.position === searchPos && !pickedIds.has(p.id) && !elim.has(p.team_code) && (
+        p.name.toLowerCase().includes(q.toLowerCase()) || (p.team_code || '').toLowerCase().includes(q.toLowerCase())
+      )).slice(0, 60)
     : []
 
   return (
@@ -1115,15 +1166,41 @@ function Fantasy({ group, uid, notify }) {
       </div>
       {view === 'ranking' && <FantasyRanking group={group} uid={uid} />}
       {view === 'team' && <>
-      <h2 style={{ fontSize: 24, margin: '4px 2px 10px' }}>Mon équipe Fantasy</h2>
-      {started && (
+      <h2 style={{ fontSize: 24, margin: '4px 2px 10px' }}>Mon équipe Fantasy <span className="muted" style={{ fontSize: 14 }}>· {PHASES[phase]}</span></h2>
+
+      {isAdmin && (
+        <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #6b46c1' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>⚙️ Admin — fenêtre de transferts</div>
+          {winOpen
+            ? <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <span style={{ fontSize: 13 }}>Ouverte : <b>{PHASES[phase]}</b></span>
+                <button className="btn alt" disabled={busy} onClick={closeWindow}>Fermer</button>
+              </div>
+            : <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                {KO_PHASES.map(([p,l]) => <button key={p} className="btn alt" disabled={busy} onClick={() => openWindow(p)} style={{ flex:1, minWidth:70 }}>Ouvrir {l}</button>)}
+              </div>}
+          <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>Ouvrir une phase clône les équipes de tout le groupe et retire les joueurs éliminés.</div>
+        </div>
+      )}
+
+      {isKO && winOpen && (
         <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #12914e' }}>
-          <span style={{ fontSize: 13 }}>🔒 Les joueurs déjà dans ton équipe sont <b>définitifs</b> (leurs points sont protégés). Tu peux encore <b>compléter</b> ton équipe : chaque joueur ajouté marque <b>à partir de son ajout</b>.</span>
+          <span style={{ fontSize: 13 }}>🔁 <b>Transferts ouverts ({PHASES[phase]}).</b> Comble les cases vides (joueurs éliminés) gratuitement.{phase === 'r32' ? ` Confort restant : ${comfortLeft ?? '—'}/2.` : ' Plus de transfert confort à ce stade.'}</span>
+        </div>
+      )}
+      {isKO && !winOpen && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <span className="muted" style={{ fontSize: 13 }}>🔒 Transferts fermés pour le moment.</span>
+        </div>
+      )}
+      {!isKO && started && (
+        <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #12914e' }}>
+          <span style={{ fontSize: 13 }}>🔒 Joueurs déjà en place <b>définitifs</b>. Chaque ajout marque <b>à partir de son ajout</b>.</span>
         </div>
       )}
       {!complete && (
         <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid #e0a200' }}>
-          <span style={{ fontSize: 13 }}>⚠️ <b>Équipe incomplète ({total}/11).</b> Il te manque : {missingText}. Tant qu'elle n'est pas au complet (11 joueurs + capitaine), elle n'est <b>pas valable</b>.{started ? ' Le tournoi a commencé : tu peux toujours compléter, mais chaque joueur ne marque qu\u2019à partir de son ajout (les matchs déjà joués avant ne comptent pas pour lui).' : ''}</span>
+          <span style={{ fontSize: 13 }}>⚠️ <b>Équipe incomplète ({total}/11).</b> Il te manque : {missingText}.</span>
         </div>
       )}
       <div className="card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1134,32 +1211,37 @@ function Fantasy({ group, uid, notify }) {
       {FORMATION.map(sec => {
         const chosen = picks.filter(p => p.position === sec.key)
         const full = chosen.length >= sec.need
+        const showAdd = !full && adding !== sec.key && !swapOut && (!isKO || winOpen)
         return (
           <div className="card" key={sec.key} style={{ marginBottom: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <b>{sec.label}</b><span className="muted">{chosen.length}/{sec.need}</span>
             </div>
-            {chosen.map(p => (
+            {chosen.map(p => {
+              const isElim = elim.has(p.team_code)
+              return (
               <div key={p.player_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
                 <button className="ghost-btn" title="Désigner capitaine" onClick={() => setCaptain(p.player_id)} style={{ fontSize: 18, padding: 0 }}>{p.is_captain ? '⭐' : '☆'}</button>
-                <div style={{ flex: 1 }}>{p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}</span></div>
-                {canRemove(p.player_id) && <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>}
+                <div style={{ flex: 1 }}>{p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}{isElim ? ' ⚠️' : ''}</span></div>
+                {isKO && winOpen && <button className="ghost-btn" disabled={busy} onClick={() => { setSwapOut({ player_id: p.player_id, position: p.position }); setAdding(null); setQ('') }} style={{ fontSize: 12, color: isElim ? '#c0392b' : 'var(--muted)' }}>{isElim ? 'Remplacer' : 'Changer'}</button>}
+                {!isKO && canRemove(p.player_id) && <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>}
               </div>
-            ))}
-            {!full && adding !== sec.key &&
-              <button className="btn alt" style={{ marginTop: 6 }} onClick={() => { setAdding(sec.key); setQ('') }}>＋ Ajouter un {sec.single}</button>}
-            {adding === sec.key && (
+            )})}
+            {showAdd &&
+              <button className="btn alt" style={{ marginTop: 6 }} onClick={() => { setAdding(sec.key); setSwapOut(null); setQ('') }}>＋ Ajouter un {sec.single}</button>}
+            {((adding === sec.key) || (swapOut && swapOut.position === sec.key)) && (
               <div style={{ marginTop: 8 }}>
+                {swapOut && <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Remplacer par un {sec.single} :</div>}
                 <input className="input" autoFocus placeholder="Tape un nom ou un pays…" value={q} onChange={e => setQ(e.target.value)} />
                 <div style={{ maxHeight: 240, overflowY: 'auto', marginTop: 6 }}>
                   {filtered.map(p => (
-                    <div key={p.id} onClick={() => addPlayer(p)} style={{ padding: '8px 6px', borderBottom: '1px solid rgba(125,125,125,.15)', cursor: 'pointer' }}>
+                    <div key={p.id} onClick={() => swapOut ? doSwap(swapOut.player_id, p) : addPlayer(p)} style={{ padding: '8px 6px', borderBottom: '1px solid rgba(125,125,125,.15)', cursor: 'pointer' }}>
                       {p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}</span>
                     </div>
                   ))}
                   {!filtered.length && <div className="muted" style={{ padding: 8, fontSize: 13 }}>Aucun joueur trouvé.</div>}
                 </div>
-                <button className="ghost-btn" style={{ marginTop: 6 }} onClick={() => { setAdding(null); setQ('') }}>Fermer</button>
+                <button className="ghost-btn" style={{ marginTop: 6 }} onClick={() => { setAdding(null); setSwapOut(null); setQ('') }}>Fermer</button>
               </div>
             )}
           </div>
@@ -1181,7 +1263,10 @@ function FantasyRanking({ group, uid }) {
   useEffect(() => {
     (async () => {
       const { data } = await supabase.from('fantasy_ranking_public').select('*').eq('group_id', group.id)
-      const sorted = (data || []).slice().sort((a, b) => (b.fantasy_points - a.fantasy_points) || (a.display_name || '').localeCompare(b.display_name || ''))
+      const PORD = { group:0, r32:1, r16:2, qf:3, sf:4, third:5, final:6 }
+      const best = {}
+      ;(data || []).forEach(r => { if (!best[r.user_id] || (PORD[r.phase]??-1) > (PORD[best[r.user_id].phase]??-1)) best[r.user_id] = r })
+      const sorted = Object.values(best).sort((a, b) => (b.fantasy_points - a.fantasy_points) || (a.display_name || '').localeCompare(b.display_name || ''))
       setRows(sorted)
     })()
   }, [group.id])
