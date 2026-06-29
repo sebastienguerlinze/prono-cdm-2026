@@ -478,6 +478,7 @@ function Matchs({ group, uid, notify }) {
   const scorerQueueRef = useRef({})           // fixture_id -> Promise : sérialise les écritures buteurs (anti-course)
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
+  const didInitPhase = useRef(false)           // pour fixer la phase par défaut une seule fois (à l'ouverture)
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
   const [myPoints, setMyPoints] = useState({}) // fixture_id -> total (base + buteurs), meme source que le classement
   const [showPast, setShowPast] = useState(false) // replier les matchs déjà joués
@@ -499,7 +500,12 @@ function Matchs({ group, uid, notify }) {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       setFixtures(fx || [])
 
-      // joueurs (pour les listes déroulantes de buteurs) — tous, par paquets
+      // phase par défaut à l'ouverture = première phase non terminée (16es maintenant, puis 8es, quarts… au fur et à mesure)
+      if (!didInitPhase.current) {
+        const firstOpen = (fx || []).find(f => f.status !== 'finished')
+        setPhase(firstOpen ? firstOpen.phase : 'final')
+        didInitPhase.current = true
+      }
       const pl = await fetchAllPlayers('name,team_code,position')
       const map = {}
       ;(pl || []).forEach(p => { (map[p.team_code] = map[p.team_code] || []).push({ name: p.name, position: p.position }) })
