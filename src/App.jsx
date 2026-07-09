@@ -474,11 +474,8 @@ function Matchs({ group, uid, notify }) {
   const [fixtures, setFixtures] = useState(null)
   const [preds, setPreds] = useState({})      // fixture_id -> {id, pred1, pred2}
   const [scorers, setScorers] = useState({})  // fixture_id -> [player_name, ...] (équipe1 + équipe2 mélangés)
-  const scorerRowsRef = useRef({})            // fixture_id -> [{id, name}, ...] : lignes réellement en base (source de vérité pour le diff ciblé)
-  const scorerQueueRef = useRef({})           // fixture_id -> Promise : sérialise les écritures buteurs (anti-course)
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
-  const didInitPhase = useRef(false)           // pour fixer la phase par défaut une seule fois (à l'ouverture)
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
   const [myPoints, setMyPoints] = useState({}) // fixture_id -> total (base + buteurs), meme source que le classement
   const [showPast, setShowPast] = useState(false) // replier les matchs déjà joués
@@ -500,12 +497,7 @@ function Matchs({ group, uid, notify }) {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       setFixtures(fx || [])
 
-      // phase par défaut à l'ouverture = première phase non terminée (16es maintenant, puis 8es, quarts… au fur et à mesure)
-      if (!didInitPhase.current) {
-        const firstOpen = (fx || []).find(f => f.status !== 'finished')
-        setPhase(firstOpen ? firstOpen.phase : 'final')
-        didInitPhase.current = true
-      }
+      // joueurs (pour les listes déroulantes de buteurs) — tous, par paquets
       const pl = await fetchAllPlayers('name,team_code,position')
       const map = {}
       ;(pl || []).forEach(p => { (map[p.team_code] = map[p.team_code] || []).push({ name: p.name, position: p.position }) })
@@ -523,72 +515,32 @@ function Matchs({ group, uid, notify }) {
       // buteurs déjà choisis
       const ids = (pr || []).map(p => p.id)
       if (ids.length) {
-        const { data: sc } = await supabase.from('prediction_scorers').select('id,prediction_id,player_name').in('prediction_id', ids)
+        const { data: sc } = await supabase.from('prediction_scorers').select('prediction_id,player_name').in('prediction_id', ids)
         const predToFx = {}; (pr || []).forEach(p => predToFx[p.id] = p.fixture_id)
-        const sm = {}; const rows = {}
-        ;(sc || []).forEach(s => {
-          const fId = predToFx[s.prediction_id]
-          ;(sm[fId] = sm[fId] || []).push(s.player_name)
-          ;(rows[fId] = rows[fId] || []).push({ id: s.id, name: s.player_name })
-        })
+        const sm = {}
+        ;(sc || []).forEach(s => { const fId = predToFx[s.prediction_id]; (sm[fId] = sm[fId] || []).push(s.player_name) })
         setScorers(sm)
-        scorerRowsRef.current = rows
       }
       setReady(true)
     })()
   }, [group.id, uid])
 
-  // ajoute/retire des buteurs de façon CIBLÉE (un buteur à la fois), sans tout réécrire.
-  // diff en multiset : on garde ce qui est commun, on supprime/insère le strict nécessaire.
-  // les doublons volontaires (= pronostiquer un doublé) sont préservés : pas de contrainte d'unicité.
+  // enregistre le score ET les buteurs en une fois
   const save = async (fx, pred1, pred2, names) => {
-    // on s'assure d'avoir un prediction_id, SANS réécrire le score si le prono existe déjà
-    let predId = preds[fx.id]?.id
-    if (!predId) {
-      const { data, error } = await supabase.from('predictions').upsert(
-        { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
-        { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
-      if (error || !data) { notify('Sauvegarde impossible'); return }
-      predId = data.id
-      setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), id: predId, pred1, pred2 } }))
+    setPreds(s => ({ ...s, [fx.id]: { ...(s[fx.id] || {}), pred1, pred2 } }))
+    const { data, error } = await supabase.from('predictions').upsert(
+      { group_id: group.id, user_id: uid, fixture_id: fx.id, pred1, pred2, updated_at: new Date().toISOString() },
+      { onConflict: 'group_id,user_id,fixture_id' }).select('id').single()
+    if (error || !data) { notify('Sauvegarde impossible'); return }
+    const predId = data.id
+    setPreds(s => ({ ...s, [fx.id]: { id: predId, pred1, pred2 } }))
+    // on remplace la liste des buteurs (simple et fiable)
+    await supabase.from('prediction_scorers').delete().eq('prediction_id', predId)
+    const clean = (names || []).filter(Boolean)
+    if (clean.length) {
+      await supabase.from('prediction_scorers').insert(clean.map(n => ({ prediction_id: predId, player_name: n })))
     }
-
-    const run = async () => {
-      const wanted = (names || []).filter(Boolean)
-      const pool = (scorerRowsRef.current[fx.id] || []).map(r => ({ ...r, used: false }))
-      const keep = []   // lignes déjà en base que l'on conserve
-      const toAdd = []  // noms à insérer
-      for (const n of wanted) {
-        const hit = pool.find(r => !r.used && r.name === n)
-        if (hit) { hit.used = true; keep.push({ id: hit.id, name: hit.name }) }
-        else toAdd.push(n)
-      }
-      const toDelete = pool.filter(r => !r.used).map(r => r.id)  // occurrences en trop
-      if (!toAdd.length && !toDelete.length) return              // rien n'a changé : silencieux
-
-      if (toDelete.length) {
-        const { error } = await supabase.from('prediction_scorers').delete().in('id', toDelete)
-        if (error) { notify('Sauvegarde impossible'); return }
-      }
-      let added = []
-      if (toAdd.length) {
-        const { data, error } = await supabase.from('prediction_scorers')
-          .insert(toAdd.map(n => ({ prediction_id: predId, player_name: n })))
-          .select('id,player_name')
-        if (error || !data) { notify('Sauvegarde impossible'); return }
-        added = data.map(r => ({ id: r.id, name: r.player_name }))
-      }
-      const finalRows = [...keep, ...added]
-      scorerRowsRef.current = { ...scorerRowsRef.current, [fx.id]: finalRows }
-      setScorers(s => ({ ...s, [fx.id]: finalRows.map(r => r.name) }))
-      notify('Prono enregistré ✓')
-    }
-
-    // file d'attente par match : les écritures s'enchaînent dans l'ordre → plus de courses
-    const prev = scorerQueueRef.current[fx.id] || Promise.resolve()
-    const next = prev.then(run, run)
-    scorerQueueRef.current[fx.id] = next
-    await next
+    notify('Prono enregistré ✓')
   }
 
   // sauvegarde du SCORE uniquement — ne touche jamais aux buteurs deja enregistres
@@ -724,7 +676,7 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
   const commit = (np1, np2, ns1, ns2) => onSave(fx, np1, np2, [...ns1, ...ns2])
 
-  const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, fx.winner, group) : null
+  const pts = finished ? scoreOf(p1, p2, fx.score1, fx.score2, group) : null
   const showScorers = group.scorers_enabled && !finished && (p1 > 0 || p2 > 0)
   const msLeft = new Date(fx.kickoff_utc).getTime() - Date.now()
   const soon = msLeft > 0 && msLeft <= 2 * 3600 * 1000
@@ -802,13 +754,10 @@ function FixtureCard({ fx, pred, group, byTeam, scorers, ready, onSave, onSaveSc
 
 const clamp = (v) => Math.max(0, Math.min(20, parseInt(v || 0, 10) || 0))
 
-function scoreOf(p1, p2, r1, r2, w, g) {
+function scoreOf(p1, p2, r1, r2, g) {
   if (r1 == null || r2 == null) return 0
-  const a = p1 ?? 0, b = p2 ?? 0
-  if (a === r1 && b === r2) return g.pts_exact
-  // resultat (1N2) juge sur le vrai vainqueur (prolongation + t.a.b. inclus), comme le serveur
-  const good = (w === 1 && a > b) || (w === 2 && b > a) || (w == null && a === b)
-  if (good) return g.pts_outcome + ((a - b) === (r1 - r2) ? g.pts_goaldiff : 0)
+  if (p1 === r1 && p2 === r2) return g.pts_exact
+  if (Math.sign(p1 - p2) === Math.sign(r1 - r2)) return g.pts_outcome + ((p1 - p2) === (r1 - r2) ? g.pts_goaldiff : 0)
   return 0
 }
 
@@ -1274,7 +1223,7 @@ function Fantasy({ group, uid, notify, isAdmin }) {
               <div key={p.player_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
                 <button className="ghost-btn" title="Désigner capitaine" onClick={() => setCaptain(p.player_id)} style={{ fontSize: 18, padding: 0 }}>{p.is_captain ? '⭐' : '☆'}</button>
                 <div style={{ flex: 1 }}>{p.name} <span className="muted" style={{ fontSize: 12 }}>· {p.team_code}{isElim ? ' ⚠️' : ''}</span></div>
-                {isKO && winOpen && <button className="ghost-btn" disabled={busy} onClick={() => { setSwapOut({ player_id: p.player_id, position: p.position }); setAdding(null); setQ('') }} style={{ fontSize: 12, color: isElim ? '#c0392b' : 'var(--muted)' }}>{isElim ? 'Remplacer' : 'Changer'}</button>}
+                {isKO && winOpen && (isElim || (phase === 'r32' && (comfortLeft ?? 0) > 0)) && <button className="ghost-btn" disabled={busy} onClick={() => { setSwapOut({ player_id: p.player_id, position: p.position }); setAdding(null); setQ('') }} style={{ fontSize: 12, color: isElim ? '#c0392b' : 'var(--muted)' }}>{isElim ? 'Remplacer' : 'Changer'}</button>}
                 {!isKO && canRemove(p.player_id) && <button className="ghost-btn" onClick={() => removePlayer(p.player_id)} style={{ color: 'var(--muted)' }}>✕</button>}
               </div>
             )})}
@@ -1308,24 +1257,30 @@ function Fantasy({ group, uid, notify, isAdmin }) {
 }
 
 function FantasyRanking({ group, uid }) {
+  const KO_COLS = [['pts_r32','16es'],['pts_r16','8es'],['pts_qf','Quarts'],['pts_sf','Demies'],['pts_finales','Finales']]
   const [rows, setRows] = useState(null)
   const [openUser, setOpenUser] = useState(null)
   const [teams, setTeams] = useState({})
+
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('fantasy_ranking_public').select('*').eq('group_id', group.id)
       const PORD = { group:0, r32:1, r16:2, qf:3, sf:4, third:5, final:6 }
-      const best = {}
-      ;(data || []).forEach(r => { if (!best[r.user_id] || (PORD[r.phase]??-1) > (PORD[best[r.user_id].phase]??-1)) best[r.user_id] = r })
-      const sorted = Object.values(best).sort((a, b) => (b.fantasy_points - a.fantasy_points) || (a.display_name || '').localeCompare(b.display_name || ''))
-      setRows(sorted)
+      const [bkRes, rkRes] = await Promise.all([
+        supabase.from('fantasy_ko_breakdown').select('*').eq('group_id', group.id),
+        supabase.from('fantasy_ranking_public').select('user_id,phase,nb_joueurs').eq('group_id', group.id),
+      ])
+      const meta = {}
+      ;(rkRes.data || []).forEach(r => { if (!meta[r.user_id] || (PORD[r.phase]??-1) > (PORD[meta[r.user_id].phase]??-1)) meta[r.user_id] = r })
+      const merged = (bkRes.data || []).map(r => ({ ...r, nb_joueurs: meta[r.user_id]?.nb_joueurs ?? 0 }))
+      merged.sort((a, b) => (b.ko_total - a.ko_total) || (a.display_name || '').localeCompare(b.display_name || ''))
+      setRows(merged)
     })()
   }, [group.id])
 
-  async function toggle(userId, phaseStarted) {
+  async function toggle(userId) {
     if (openUser === userId) { setOpenUser(null); return }
     setOpenUser(userId)
-    if (phaseStarted && !teams[userId]) {
+    if (!teams[userId]) {
       const { data } = await supabase.from('fantasy_team_public').select('player_name,team_code,position,is_captain').eq('group_id', group.id).eq('user_id', userId)
       const order = { Goalkeeper: 0, Defender: 1, Midfielder: 2, Attacker: 3 }
       const sorted = (data || []).slice().sort((a, b) => (order[a.position] - order[b.position]) || (a.player_name || '').localeCompare(b.player_name || ''))
@@ -1334,41 +1289,55 @@ function FantasyRanking({ group, uid }) {
   }
 
   if (rows === null) return <div className="center"><div className="spinner" /></div>
-  const anyPts = rows.some(r => r.fantasy_points > 0)
+
+  const cols = KO_COLS.filter(([k]) => rows.some(r => (r[k] || 0) > 0))
+  const anyPts = rows.some(r => r.ko_total > 0)
+  const cell = { width: 40, textAlign: 'center', fontSize: 12, flexShrink: 0 }
+
   return (
     <>
+      <p className="muted" style={{ fontSize: 12, margin: '0 2px 4px' }}>Phase à élimination : les points de chaque tour s'additionnent (finale ×2). Ce total donnera le Bonus #2 au classement général.</p>
       <p className="muted" style={{ fontSize: 12, margin: '0 2px 12px' }}>Touche un participant pour voir son équipe.</p>
       {!anyPts &&
         <div className="card" style={{ marginBottom: 12 }}>
-          <span className="muted" style={{ fontSize: 13 }}>🌟 Le classement se remplira dès que les équipes de tes joueurs entreront en lice.</span>
+          <span className="muted" style={{ fontSize: 13 }}>🌟 Le classement se remplira au fil des matchs à élimination.</span>
         </div>}
       <div className="card" style={{ padding: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid rgba(125,125,125,.2)' }}>
+          <div style={{ width: 26, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }} />
+          {cols.map(([k, lab]) => <div key={k} className="muted" style={{ ...cell, fontSize: 10, textTransform: 'uppercase' }}>{lab}</div>)}
+          <div style={{ ...cell, width: 46, fontSize: 10, fontWeight: 700 }}>TOTAL</div>
+          <div style={{ width: 14, flexShrink: 0 }} />
+        </div>
         {rows.map((r, i) => (
           <div key={r.user_id}>
-            <div className="lb-row" onClick={() => toggle(r.user_id, r.phase_started)} style={{ cursor: 'pointer' }}>
-              <div className={'rank r' + (i + 1)}>{i + 1}</div>
-              <div className="lb-name">{r.display_name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}<div className="lb-sub">{r.nb_joueurs}/11 joueurs</div></div>
-              <div className="lb-pts">{r.fantasy_points}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
-              <div className="lb-sub" style={{ marginLeft: 8 }}>{openUser === r.user_id ? '▴' : '▾'}</div>
+            <div className="lb-row" onClick={() => toggle(r.user_id)} style={{ cursor: 'pointer' }}>
+              <div className={'rank r' + (i + 1)} style={{ flexShrink: 0 }}>{i + 1}</div>
+              <div className="lb-name" style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.display_name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}</div>
+                <div className="lb-sub">{r.nb_joueurs}/11 joueurs</div>
+              </div>
+              {cols.map(([k]) => <div key={k} className="muted" style={cell}>{r[k] || 0}</div>)}
+              <div style={{ ...cell, width: 46, fontWeight: 700, fontSize: 15 }}>{r.ko_total}</div>
+              <div className="lb-sub" style={{ width: 14, flexShrink: 0, textAlign: 'right' }}>{openUser === r.user_id ? '\u25b4' : '\u25be'}</div>
             </div>
             {openUser === r.user_id && (
               <div style={{ padding: '2px 14px 12px', background: 'rgba(0,0,0,0.03)' }}>
-                {!r.phase_started
-                  ? <div className="muted lb-sub" style={{ padding: 8 }}>🔒 Équipe visible une fois la phase commencée.</div>
-                  : !teams[r.user_id]
-                    ? <div className="muted lb-sub" style={{ padding: 8 }}>Chargement…</div>
-                    : teams[r.user_id].length === 0
-                      ? <div className="muted lb-sub" style={{ padding: 8 }}>Équipe vide.</div>
-                      : teams[r.user_id].map((p, idx) => (
-                          <div key={idx} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
-                            <span style={{ fontSize: 13 }}>{p.is_captain ? '⭐ ' : ''}{p.player_name}<span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{POS_FR[p.position] || p.position} · {p.team_code}</span></span>
-                          </div>
-                        ))}
+                {!teams[r.user_id]
+                  ? <div className="muted lb-sub" style={{ padding: 8 }}>Chargement\u2026</div>
+                  : teams[r.user_id].length === 0
+                    ? <div className="muted lb-sub" style={{ padding: 8 }}>\u00c9quipe pas encore visible.</div>
+                    : teams[r.user_id].map((p, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+                          <span style={{ fontSize: 13 }}>{p.is_captain ? '\u2b50 ' : ''}{p.player_name}<span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{POS_FR[p.position] || p.position} \u00b7 {p.team_code}</span></span>
+                        </div>
+                      ))}
               </div>
             )}
           </div>
         ))}
-        {!rows.length && <div className="empty" style={{ padding: 20 }}>Aucune équipe pour l'instant.</div>}
+        {!rows.length && <div className="empty" style={{ padding: 20 }}>Aucune \u00e9quipe pour l'instant.</div>}
       </div>
     </>
   )
