@@ -1289,45 +1289,41 @@ function FantasyRanking({ group, uid }) {
   }
 
   if (rows === null) return <div className="center"><div className="spinner" /></div>
-
-  const cols = KO_COLS.filter(([k]) => rows.some(r => (r[k] || 0) > 0))
   const anyPts = rows.some(r => r.ko_total > 0)
-  const cell = { width: 40, textAlign: 'center', fontSize: 12, flexShrink: 0 }
 
   return (
     <>
       <p className="muted" style={{ fontSize: 12, margin: '0 2px 4px' }}>Phase à élimination : les points de chaque tour s'additionnent (finale ×2). Ce total donnera le Bonus #2 au classement général.</p>
-      <p className="muted" style={{ fontSize: 12, margin: '0 2px 12px' }}>Touche un participant pour voir son équipe.</p>
+      <p className="muted" style={{ fontSize: 12, margin: '0 2px 12px' }}>Touche un participant pour voir le détail par phase et son équipe.</p>
       {!anyPts &&
         <div className="card" style={{ marginBottom: 12 }}>
           <span className="muted" style={{ fontSize: 13 }}>🌟 Le classement se remplira au fil des matchs à élimination.</span>
         </div>}
       <div className="card" style={{ padding: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid rgba(125,125,125,.2)' }}>
-          <div style={{ width: 26, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }} />
-          {cols.map(([k, lab]) => <div key={k} className="muted" style={{ ...cell, fontSize: 10, textTransform: 'uppercase' }}>{lab}</div>)}
-          <div style={{ ...cell, width: 46, fontSize: 10, fontWeight: 700 }}>TOTAL</div>
-          <div style={{ width: 14, flexShrink: 0 }} />
-        </div>
         {rows.map((r, i) => (
           <div key={r.user_id}>
-            <div className="lb-row" onClick={() => toggle(r.user_id)} style={{ cursor: 'pointer' }}>
+            <div className="lb-row" onClick={() => toggle(r.user_id)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
               <div className={'rank r' + (i + 1)} style={{ flexShrink: 0 }}>{i + 1}</div>
               <div className="lb-name" style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.display_name} {r.user_id === uid && <span className="muted lb-sub">(toi)</span>}</div>
                 <div className="lb-sub">{r.nb_joueurs}/11 joueurs</div>
               </div>
-              {cols.map(([k]) => <div key={k} className="muted" style={cell}>{r[k] || 0}</div>)}
-              <div style={{ ...cell, width: 46, fontWeight: 700, fontSize: 15 }}>{r.ko_total}</div>
-              <div className="lb-sub" style={{ width: 14, flexShrink: 0, textAlign: 'right' }}>{openUser === r.user_id ? '\u25b4' : '\u25be'}</div>
+              <div className="lb-pts" style={{ flexShrink: 0 }}>{r.ko_total}<span className="lb-sub" style={{ marginLeft: 4 }}>pts</span></div>
+              <div className="lb-sub" style={{ marginLeft: 8, flexShrink: 0 }}>{openUser === r.user_id ? '\u25b4' : '\u25be'}</div>
             </div>
             {openUser === r.user_id && (
-              <div style={{ padding: '2px 14px 12px', background: 'rgba(0,0,0,0.03)' }}>
+              <div style={{ padding: '4px 14px 12px', background: 'rgba(0,0,0,0.03)' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                  {KO_COLS.map(([k, lab]) => (
+                    <div key={k} style={{ background: 'rgba(18,145,78,0.10)', borderRadius: 8, padding: '4px 9px', fontSize: 12 }}>
+                      <span className="muted">{lab} </span><b>{r[k] || 0}</b>
+                    </div>
+                  ))}
+                </div>
                 {!teams[r.user_id]
-                  ? <div className="muted lb-sub" style={{ padding: 8 }}>Chargement\u2026</div>
+                  ? <div className="muted lb-sub" style={{ padding: 4 }}>Chargement\u2026</div>
                   : teams[r.user_id].length === 0
-                    ? <div className="muted lb-sub" style={{ padding: 8 }}>\u00c9quipe pas encore visible.</div>
+                    ? <div className="muted lb-sub" style={{ padding: 4 }}>\u00c9quipe pas encore visible.</div>
                     : teams[r.user_id].map((p, idx) => (
                         <div key={idx} style={{ display: 'flex', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
                           <span style={{ fontSize: 13 }}>{p.is_captain ? '\u2b50 ' : ''}{p.player_name}<span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{POS_FR[p.position] || p.position} \u00b7 {p.team_code}</span></span>
