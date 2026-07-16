@@ -501,7 +501,9 @@ function Matchs({ group, uid, notify }) {
       // phase d'accueil : premiere phase non terminee (poules -> 16es -> ... -> finale, auto)
       if (!didInitPhase.current) {
         const next = (fx || []).find(f => f.status !== 'finished')
-        setPhase(next ? next.phase : 'final')
+        let ph = next ? next.phase : 'final'
+        if (ph === 'third') ph = 'final'   // petite finale + finale le meme week-end : on ouvre sur la finale
+        setPhase(ph)
         didInitPhase.current = true
       }
 
