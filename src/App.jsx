@@ -476,6 +476,7 @@ function Matchs({ group, uid, notify }) {
   const [scorers, setScorers] = useState({})  // fixture_id -> [player_name, ...] (équipe1 + équipe2 mélangés)
   const [byTeam, setByTeam] = useState({})     // team_code -> [{name, position}]
   const [phase, setPhase] = useState('group')
+  const didInitPhase = useRef(false)
   const [ready, setReady] = useState(false)    // toutes les données chargées ?
   const [myPoints, setMyPoints] = useState({}) // fixture_id -> total (base + buteurs), meme source que le classement
   const [showPast, setShowPast] = useState(false) // replier les matchs déjà joués
@@ -496,6 +497,13 @@ function Matchs({ group, uid, notify }) {
     (async () => {
       const { data: fx } = await supabase.from('fixtures').select('*').order('kickoff_utc')
       setFixtures(fx || [])
+
+      // phase d'accueil : premiere phase non terminee (poules -> 16es -> ... -> finale, auto)
+      if (!didInitPhase.current) {
+        const next = (fx || []).find(f => f.status !== 'finished')
+        setPhase(next ? next.phase : 'final')
+        didInitPhase.current = true
+      }
 
       // joueurs (pour les listes déroulantes de buteurs) — tous, par paquets
       const pl = await fetchAllPlayers('name,team_code,position')
